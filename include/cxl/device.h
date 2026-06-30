@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-struct CxlHardwareConfig {
+struct CxlDeviceConfig {
     std::string bdf = "0000:b8:00.0";
     uint32_t bar_index = 2;
     std::string dax_path = "/dev/dax1.0";
@@ -20,13 +20,13 @@ struct CxlHardwareConfig {
     uint32_t done_assert_latency_us = 5000;
 };
 
-class CxlHardware {
+class CxlDevice {
 public:
-    explicit CxlHardware(CxlHardwareConfig config = {});
-    ~CxlHardware();
+    explicit CxlDevice(CxlDeviceConfig config = {});
+    ~CxlDevice();
 
-    CxlHardware(const CxlHardware&) = delete;
-    CxlHardware& operator=(const CxlHardware&) = delete;
+    CxlDevice(const CxlDevice&) = delete;
+    CxlDevice& operator=(const CxlDevice&) = delete;
 
     bool init();
     bool is_ready() const;

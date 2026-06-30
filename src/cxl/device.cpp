@@ -1,11 +1,10 @@
-#include "include/cxl_hardware.h"
+#include "../../include/cxl/device.h"
+#include "../../include/cxl/driver.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstring>
-
-#include "include/cxl_driver.h"
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -18,9 +17,9 @@
 #endif
 #endif
 
-class CxlHardware::Impl {
+class CxlDevice::Impl {
 public:
-    explicit Impl(CxlHardwareConfig config_in)
+    explicit Impl(CxlDeviceConfig config_in)
         : config(std::move(config_in)) {}
 
     ~Impl() {
@@ -31,12 +30,8 @@ public:
         if (bar_base != MAP_FAILED) {
             munmap(bar_base, static_cast<size_t>(bar_bytes));
         }
-        if (bar_fd >= 0) {
-            close(bar_fd);
-        }
-        if (dax_fd >= 0) {
-            close(dax_fd);
-        }
+        if (bar_fd >= 0) close(bar_fd);
+        if (dax_fd >= 0) close(dax_fd);
 #endif
     }
 
@@ -110,7 +105,7 @@ public:
     }
 #endif
 
-    CxlHardwareConfig config;
+    CxlDeviceConfig config;
     std::string error;
     bool ready = false;
 
@@ -124,23 +119,22 @@ public:
     uint64_t dax_map_start = 0;
     uint64_t dax_map_bytes = 0;
 
-    std::unique_ptr<MappedMmioRegisterIO> register_io;
-    std::unique_ptr<CxlCuDDriver> driver;
+    std::unique_ptr<MmioRegisterIo> register_io;
+    std::unique_ptr<CxlCudDriver> driver;
 #endif
 };
 
-CxlHardware::CxlHardware(CxlHardwareConfig config)
+CxlDevice::CxlDevice(CxlDeviceConfig config)
     : impl_(std::make_unique<Impl>(std::move(config))) {}
 
-CxlHardware::~CxlHardware() = default;
+CxlDevice::~CxlDevice() = default;
 
-bool CxlHardware::init() {
+bool CxlDevice::init() {
 #ifndef __linux__
-    return impl_->fail("CxlHardware is supported only on Linux.");
+    return impl_->fail("CxlDevice is supported only on Linux.");
 #else
-    if (impl_->ready) {
-        return true;
-    }
+    if (impl_->ready) return true;
+
     if (impl_->config.dax_map_alignment == 0 ||
         (impl_->config.dax_map_alignment & (impl_->config.dax_map_alignment - 1ULL)) != 0) {
         return impl_->fail("DAX mmap alignment must be a power of two.");
@@ -179,37 +173,33 @@ bool CxlHardware::init() {
         );
     }
 
-    impl_->register_io = std::make_unique<MappedMmioRegisterIO>(
+    impl_->register_io = std::make_unique<MmioRegisterIo>(
         reinterpret_cast<volatile uint8_t*>(impl_->bar_base),
         impl_->bar_bytes
     );
 
-    CxlControlMap control = impl_->config.use_upper_window
-        ? CxlControlMap::make_vcu_test_profile_upper4kb()
-        : CxlControlMap::make_vcu_test_profile_lower4kb();
+    CxlControlConfig control = impl_->config.use_upper_window
+        ? CxlControlConfig::make_vcu_test_profile_upper4kb()
+        : CxlControlConfig::make_vcu_test_profile_lower4kb();
     control.command_address_dont_care = impl_->config.command_address_dont_care;
     control.done_assert_latency_us = impl_->config.done_assert_latency_us;
 
-    impl_->driver = std::make_unique<CxlCuDDriver>(*impl_->register_io, control);
+    impl_->driver = std::make_unique<CxlCudDriver>(*impl_->register_io, control);
     impl_->error.clear();
     impl_->ready = true;
     return true;
 #endif
 }
 
-bool CxlHardware::is_ready() const {
+bool CxlDevice::is_ready() const {
     return impl_->ready;
 }
 
-const std::string& CxlHardware::last_error() const {
+const std::string& CxlDevice::last_error() const {
     return impl_->error;
 }
 
-uint64_t CxlHardware::row_col_offset(
-    uint32_t bank,
-    uint32_t row,
-    uint32_t col64
-) const {
+uint64_t CxlDevice::row_col_offset(uint32_t bank, uint32_t row, uint32_t col64) const {
     return
         (static_cast<uint64_t>(row & 0x1FFFFU) << 17) |
         (static_cast<uint64_t>((col64 >> 3) & 0x7FU) << 10) |
@@ -217,30 +207,18 @@ uint64_t CxlHardware::row_col_offset(
         (static_cast<uint64_t>(col64 & 0x7U) << 3);
 }
 
-bool CxlHardware::write_row_col(
-    uint32_t bank,
-    uint32_t row,
-    uint32_t col64,
-    uint64_t value
-) {
+bool CxlDevice::write_row_col(uint32_t bank, uint32_t row, uint32_t col64, uint64_t value) {
 #ifndef __linux__
-    (void)bank;
-    (void)row;
-    (void)col64;
-    (void)value;
-    return impl_->fail("CxlHardware is supported only on Linux.");
+    (void)bank; (void)row; (void)col64; (void)value;
+    return impl_->fail("CxlDevice is supported only on Linux.");
 #else
-    if (!impl_->ready) {
-        return impl_->fail("CxlHardware is not initialized.");
-    }
+    if (!impl_->ready) return impl_->fail("CxlDevice is not initialized.");
     if (bank >= 16 || row >= (1U << 17) || col64 >= 1024) {
         return impl_->fail("Invalid bank, row, or 64-bit column.");
     }
 
     const uint64_t offset = row_col_offset(bank, row, col64);
-    if (!impl_->map_dax_offset(offset)) {
-        return false;
-    }
+    if (!impl_->map_dax_offset(offset)) return false;
 
     volatile uint64_t* word = impl_->mapped_word(offset);
     *word = value;
@@ -251,30 +229,18 @@ bool CxlHardware::write_row_col(
 #endif
 }
 
-bool CxlHardware::read_row_col(
-    uint32_t bank,
-    uint32_t row,
-    uint32_t col64,
-    uint64_t& value_out
-) {
+bool CxlDevice::read_row_col(uint32_t bank, uint32_t row, uint32_t col64, uint64_t& value_out) {
 #ifndef __linux__
-    (void)bank;
-    (void)row;
-    (void)col64;
-    (void)value_out;
-    return impl_->fail("CxlHardware is supported only on Linux.");
+    (void)bank; (void)row; (void)col64; (void)value_out;
+    return impl_->fail("CxlDevice is supported only on Linux.");
 #else
-    if (!impl_->ready) {
-        return impl_->fail("CxlHardware is not initialized.");
-    }
+    if (!impl_->ready) return impl_->fail("CxlDevice is not initialized.");
     if (bank >= 16 || row >= (1U << 17) || col64 >= 1024) {
         return impl_->fail("Invalid bank, row, or 64-bit column.");
     }
 
     const uint64_t offset = row_col_offset(bank, row, col64);
-    if (!impl_->map_dax_offset(offset)) {
-        return false;
-    }
+    if (!impl_->map_dax_offset(offset)) return false;
 
     volatile uint64_t* word = impl_->mapped_word(offset);
     Impl::flush_cacheline(word);
@@ -284,23 +250,20 @@ bool CxlHardware::read_row_col(
 #endif
 }
 
-bool CxlHardware::fill_row(uint32_t bank, uint32_t row, uint64_t value) {
+bool CxlDevice::fill_row(uint32_t bank, uint32_t row, uint64_t value) {
     for (uint32_t col64 = 0; col64 < 1024; ++col64) {
-        if (!write_row_col(bank, row, col64, value)) {
-            return false;
-        }
+        if (!write_row_col(bank, row, col64, value)) return false;
     }
     return true;
 }
 
-bool CxlHardware::execute(const std::vector<uint32_t>& uops, bool append_end) {
+bool CxlDevice::execute(const std::vector<uint32_t>& uops, bool append_end) {
 #ifndef __linux__
-    (void)uops;
-    (void)append_end;
-    return impl_->fail("CxlHardware is supported only on Linux.");
+    (void)uops; (void)append_end;
+    return impl_->fail("CxlDevice is supported only on Linux.");
 #else
     if (!impl_->ready || impl_->driver == nullptr) {
-        return impl_->fail("CxlHardware is not initialized.");
+        return impl_->fail("CxlDevice is not initialized.");
     }
 
     std::string driver_error;
