@@ -38,16 +38,56 @@ std::string read_attr(const std::string& path) {
     return s;
 }
 
-std::string extract_bdf(const std::string& path) {
-    static const std::regex kBdf("[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-9a-f]");
-    std::smatch m;
-    std::string tail = path;
-    std::string last;
-    while (std::regex_search(tail, m, kBdf)) {
-        last = m[0].str();
-        tail = m.suffix().str();
+// Parse one line of /sys/bus/pci/devices/<bdf>/resource:
+// format: "0xSTART 0xEND 0xFLAGS"
+// Returns BAR size = end - start + 1, or 0 if the BAR is absent/IO.
+size_t parse_resource_line(const std::string& line) {
+    try {
+        size_t pos  = 0;
+        uint64_t start = std::stoull(line, &pos, 16);
+        while (pos < line.size() && line[pos] == ' ') ++pos;
+        size_t pos2 = 0;
+        uint64_t end   = std::stoull(line.substr(pos), &pos2, 16);
+        pos += pos2;
+        while (pos < line.size() && line[pos] == ' ') ++pos;
+        uint64_t flags = std::stoull(line.substr(pos), nullptr, 16);
+        // Bit 0 = PCI_IORESOURCE_IO; skip IO BARs and absent BARs.
+        if (start == 0 || end < start || (flags & 0x1)) return 0;
+        return static_cast<size_t>(end - start + 1);
+    } catch (...) { return 0; }
+}
+
+// Read BAR size for bar_index from the text resource file.
+size_t read_bar_size(const std::string& bdf, uint32_t bar_index) {
+    const std::string path = "/sys/bus/pci/devices/" + bdf + "/resource";
+    std::ifstream f(path);
+    if (!f) return 0;
+    std::string line;
+    for (uint32_t i = 0; std::getline(f, line); ++i) {
+        if (i == bar_index) return parse_resource_line(line);
     }
-    return last;
+    return 0;
+}
+
+// Walk directory components of real_path from right to left.
+// Return the first component that matches BDF format AND exists under
+// /sys/bus/pci/devices/.
+std::string extract_bdf(const std::string& real_path) {
+    static const std::regex kBdf("[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-9a-f]");
+    std::string path = real_path;
+    while (!path.empty() && path != "/") {
+        const size_t slash = path.rfind('/');
+        if (slash == std::string::npos) break;
+        const std::string component = path.substr(slash + 1);
+        if (std::regex_match(component, kBdf)) {
+            struct stat st{};
+            const std::string pci = "/sys/bus/pci/devices/" + component;
+            if (stat(pci.c_str(), &st) == 0)
+                return component;
+        }
+        path = path.substr(0, slash);
+    }
+    return "";
 }
 
 uint64_t read_dax_size(const std::string& dax_name) {
@@ -57,12 +97,10 @@ uint64_t read_dax_size(const std::string& dax_name) {
     try { return std::stoull(val, nullptr, 0); } catch (...) { return 0; }
 }
 
+// Find the first memory BAR index with non-zero size, trying 2, 0, 4.
 uint32_t detect_bar_index(const std::string& bdf) {
-    const std::string base = "/sys/bus/pci/devices/" + bdf + "/resource";
     for (uint32_t idx : {2u, 0u, 4u}) {
-        struct stat st{};
-        if (stat((base + std::to_string(idx)).c_str(), &st) == 0 && st.st_size > 0)
-            return idx;
+        if (read_bar_size(bdf, idx) > 0) return idx;
     }
     return 2;
 }
