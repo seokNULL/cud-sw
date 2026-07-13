@@ -1,6 +1,5 @@
 #include "../include/cxl/enumerator.h"
 
-#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
@@ -11,32 +10,13 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#if defined(__x86_64__) || defined(__i386__)
 #include <emmintrin.h>
-#endif
 
-static constexpr uint64_t kTestBytes      = 4ULL * 1024 * 1024;
 static constexpr uint64_t kWordBytes      = sizeof(uint64_t);
 static constexpr uint64_t kCacheLineWords = 64 / kWordBytes;
 
 static uint64_t test_pattern(uint64_t word_index) {
     return (word_index * 0x9E3779B97F4A7C15ULL) ^ 0xC0FFEE00DEADBEEFULL;
-}
-
-static void clflush_line(volatile void* p) {
-#if defined(__x86_64__) || defined(__i386__)
-    _mm_clflush(const_cast<const void*>(p));
-#else
-    (void)p;
-#endif
-}
-
-static void mem_fence() {
-#if defined(__x86_64__) || defined(__i386__)
-    _mm_mfence();
-#else
-    std::atomic_thread_fence(std::memory_order_seq_cst);
-#endif
 }
 
 static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
@@ -49,7 +29,7 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
         return false;
     }
 
-    const uint64_t map_bytes = std::min<uint64_t>(dev.dax_size_bytes, kTestBytes);
+    const uint64_t map_bytes = dev.dax_size_bytes;
     const uint64_t n_words   = map_bytes / kWordBytes;
 
     const int fd = open(dev.dax_path.c_str(), O_RDWR);
@@ -70,22 +50,22 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
         return false;
     }
 
-    std::cout << "  mmap OK: " << (map_bytes >> 10) << " KiB @ " << mem << "\n";
+    std::cout << "  mmap OK: " << (map_bytes >> 20) << " MiB @ " << mem << "\n";
 
     volatile uint64_t* const words = reinterpret_cast<volatile uint64_t*>(mem);
 
     std::cout << "  Writing " << n_words << " x 64-bit words ...\n";
     for (uint64_t i = 0; i < n_words; ++i)
         words[i] = test_pattern(i);
-    mem_fence();
+    _mm_mfence();
     for (uint64_t i = 0; i < n_words; i += kCacheLineWords)
-        clflush_line(const_cast<uint64_t*>(&words[i]));
-    mem_fence();
+        _mm_clflush(const_cast<uint64_t*>(&words[i]));
+    _mm_mfence();
 
     std::cout << "  Reading back and verifying ...\n";
     for (uint64_t i = 0; i < n_words; i += kCacheLineWords)
-        clflush_line(const_cast<uint64_t*>(&words[i]));
-    mem_fence();
+        _mm_clflush(const_cast<uint64_t*>(&words[i]));
+    _mm_mfence();
 
     uint64_t errors = 0;
     for (uint64_t i = 0; i < n_words; ++i) {
