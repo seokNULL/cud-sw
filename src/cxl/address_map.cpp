@@ -1,127 +1,110 @@
 #include "../../include/cxl/address_map.h"
 
-#include <cstdint>
+#include <cstddef>
 #include <iostream>
+#include <vector>
 
-// ── Bit manipulation helpers ──────────────────────────────────────────────────
+// Expand the #define bit-position lists into vectors.
+// An empty #define (e.g. ADDR_CH_BITS) expands to {}, giving an empty vector.
+static const std::vector<int> kColBits  = { ADDR_COL_BITS };
+static const std::vector<int> kBankBits = { ADDR_BK_BITS  };
+static const std::vector<int> kRowBits  = { ADDR_ROW_BITS };
+static const std::vector<int> kChBits   = { ADDR_CH_BITS  };
 
-static uint32_t extract_bits(uint64_t val, const AddrBitField& f) {
-    if (f.num_bits <= 0) return 0;
-    return static_cast<uint32_t>((val >> f.start_bit) & ((1ULL << f.num_bits) - 1));
+// ── Bit manipulation ──────────────────────────────────────────────────────────
+
+// Extract a field from pa using the given bit-position list.
+// bits[0] maps to field bit 0 (LSB), bits[n-1] maps to field bit n-1 (MSB).
+static uint32_t extract_field(uint64_t pa, const std::vector<int>& bits) {
+    uint32_t val = 0;
+    for (size_t i = 0; i < bits.size(); ++i)
+        val |= static_cast<uint32_t>((pa >> bits[i]) & 1ULL) << i;
+    return val;
 }
 
-static uint64_t insert_bits(uint64_t val, uint32_t field, const AddrBitField& f) {
-    if (f.num_bits <= 0) return val;
-    const uint64_t mask = ((1ULL << f.num_bits) - 1ULL) << f.start_bit;
-    return (val & ~mask) | ((static_cast<uint64_t>(field) << f.start_bit) & mask);
-}
-
-// ── Default map ───────────────────────────────────────────────────────────────
-// Edit this function to match your CXL device's actual address mapping.
-//
-// Current example — DDR5-like, single channel:
-//   PA[5:0]  = byte offset within 64-byte cache line (not mapped)
-//   PA[12:6] = column   (7 bits → 128 cache-line-addressed columns)
-//   PA[16:13]= bank     (4 bits → 16 banks)
-//   PA[32:17]= row      (16 bits → 65536 rows)
-DramAddressMap default_dram_address_map() {
-    DramAddressMap m;
-    m.topology.num_channels = 1;
-    m.topology.num_banks    = 16;
-    m.topology.num_rows     = 65536;
-    m.topology.num_cols     = 128;
-
-    m.col     = { .start_bit =  6, .num_bits =  7 }; // PA[12:6]
-    m.bank    = { .start_bit = 13, .num_bits =  4 }; // PA[16:13]
-    m.row     = { .start_bit = 17, .num_bits = 16 }; // PA[32:17]
-    m.channel = { .start_bit =  0, .num_bits =  0 }; // single channel
-
-    return m;
-}
-
-// ── Decode / Encode ───────────────────────────────────────────────────────────
-
-DramAddress decode_physical_addr(uint64_t pa, const DramAddressMap& map) {
-    DramAddress d;
-    d.channel = extract_bits(pa, map.channel);
-    d.bank    = extract_bits(pa, map.bank);
-    d.row     = extract_bits(pa, map.row);
-    d.col     = extract_bits(pa, map.col);
-    return d;
-}
-
-uint64_t encode_dram_addr(const DramAddress& addr, const DramAddressMap& map) {
-    uint64_t pa = 0;
-    pa = insert_bits(pa, addr.channel, map.channel);
-    pa = insert_bits(pa, addr.bank,    map.bank);
-    pa = insert_bits(pa, addr.row,     map.row);
-    pa = insert_bits(pa, addr.col,     map.col);
+// Insert a field into pa at the given bit positions.
+static uint64_t insert_field(uint64_t pa, uint32_t field, const std::vector<int>& bits) {
+    for (size_t i = 0; i < bits.size(); ++i) {
+        const uint64_t mask = 1ULL << bits[i];
+        if ((field >> i) & 1u)
+            pa |= mask;
+        else
+            pa &= ~mask;
+    }
     return pa;
 }
 
-// ── Print ─────────────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
+
+DramAddress decode_physical_addr(uint64_t pa) {
+    DramAddress d;
+    d.channel = extract_field(pa, kChBits);
+    d.bank    = extract_field(pa, kBankBits);
+    d.row     = extract_field(pa, kRowBits);
+    d.col     = extract_field(pa, kColBits);
+    return d;
+}
+
+uint64_t encode_dram_addr(const DramAddress& addr) {
+    uint64_t pa = 0;
+    pa = insert_field(pa, addr.channel, kChBits);
+    pa = insert_field(pa, addr.bank,    kBankBits);
+    pa = insert_field(pa, addr.row,     kRowBits);
+    pa = insert_field(pa, addr.col,     kColBits);
+    return pa;
+}
 
 void print_dram_address(uint64_t pa, const DramAddress& d) {
     std::cout << "  PA=0x" << std::hex << pa << std::dec
-              << "  channel=" << d.channel
-              << "  bank="    << d.bank
-              << "  row="     << d.row
-              << "  col="     << d.col << "\n";
+              << "  ch="   << d.channel
+              << "  bank=" << d.bank
+              << "  row="  << d.row
+              << "  col="  << d.col << "\n";
 }
 
-// ── Validation ────────────────────────────────────────────────────────────────
-
-bool validate_address_map(const DramAddressMap& map) {
+bool validate_address_map() {
     bool ok = true;
 
-    // Check each field's bit width is sufficient for the declared topology count.
-    struct { const char* name; const AddrBitField& f; uint32_t count; } fields[] = {
-        { "channel", map.channel, map.topology.num_channels },
-        { "bank",    map.bank,    map.topology.num_banks    },
-        { "row",     map.row,     map.topology.num_rows     },
-        { "col",     map.col,     map.topology.num_cols     },
+    // Check that each field has enough bits for its declared topology count.
+    struct Entry { const char* name; const std::vector<int>& bits; uint32_t count; };
+    const Entry entries[] = {
+        { "channel", kChBits,   NUM_CH  },
+        { "bank",    kBankBits, NUM_BK  },
+        { "row",     kRowBits,  NUM_ROW },
+        { "col",     kColBits,  NUM_COL },
     };
-    for (const auto& fd : fields) {
-        if (fd.f.num_bits < 0) {
-            std::cerr << "[WARN] " << fd.name << ": negative num_bits\n";
-            ok = false;
-            continue;
-        }
-        if (fd.count > 1 && fd.f.num_bits == 0) {
-            std::cerr << "[WARN] " << fd.name << ": topology count=" << fd.count
-                      << " but num_bits=0 (no bits allocated)\n";
-            ok = false;
-            continue;
-        }
-        if (fd.f.num_bits > 0) {
-            const uint32_t addressable = 1u << fd.f.num_bits;
-            if (addressable < fd.count) {
-                std::cerr << "[WARN] " << fd.name << ": " << fd.f.num_bits
-                          << " bit(s) can address " << addressable
-                          << " units but topology says " << fd.count << "\n";
+    for (const auto& e : entries) {
+        if (e.bits.empty()) {
+            if (e.count > 1) {
+                std::cerr << "[WARN] " << e.name
+                          << ": no PA bits allocated but count=" << e.count << "\n";
                 ok = false;
             }
+            continue;
+        }
+        const uint32_t addressable = 1u << static_cast<int>(e.bits.size());
+        if (addressable < e.count) {
+            std::cerr << "[WARN] " << e.name << ": " << e.bits.size()
+                      << " bit(s) can address " << addressable
+                      << " units, but count=" << e.count << "\n";
+            ok = false;
         }
     }
 
-    // Check for overlapping bit ranges between fields.
-    // Build a bitmask of used PA bits for each field and check for intersections.
-    auto bit_mask = [](const AddrBitField& f) -> uint64_t {
-        if (f.num_bits <= 0) return 0;
-        return ((1ULL << f.num_bits) - 1ULL) << f.start_bit;
-    };
+    // Check that no PA bit is assigned to more than one field.
+    struct BitEntry { int bit; const char* field; };
+    std::vector<BitEntry> all;
+    for (int b : kChBits)   all.push_back({ b, "channel" });
+    for (int b : kBankBits) all.push_back({ b, "bank"    });
+    for (int b : kRowBits)  all.push_back({ b, "row"     });
+    for (int b : kColBits)  all.push_back({ b, "col"     });
 
-    struct { const char* name; uint64_t mask; } masks[] = {
-        { "channel", bit_mask(map.channel) },
-        { "bank",    bit_mask(map.bank)    },
-        { "row",     bit_mask(map.row)     },
-        { "col",     bit_mask(map.col)     },
-    };
-    for (size_t i = 0; i < 4; ++i) {
-        for (size_t j = i + 1; j < 4; ++j) {
-            if (masks[i].mask & masks[j].mask) {
-                std::cerr << "[WARN] " << masks[i].name << " and " << masks[j].name
-                          << " share overlapping PA bits\n";
+    for (size_t i = 0; i < all.size(); ++i) {
+        for (size_t j = i + 1; j < all.size(); ++j) {
+            if (all[i].bit == all[j].bit) {
+                std::cerr << "[WARN] PA bit " << all[i].bit
+                          << " assigned to both '" << all[i].field
+                          << "' and '" << all[j].field << "'\n";
                 ok = false;
             }
         }
