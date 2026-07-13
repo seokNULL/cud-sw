@@ -7,12 +7,10 @@
 #include <string>
 #include <vector>
 
-#ifdef __linux__
 #include <dirent.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 void print_cxl_devices(const std::vector<CxlDeviceInfo>& devices) {
     if (devices.empty()) {
@@ -30,15 +28,8 @@ void print_cxl_devices(const std::vector<CxlDeviceInfo>& devices) {
     }
 }
 
-#ifndef __linux__
-
-std::vector<CxlDeviceInfo> enumerate_cxl_devices() { return {}; }
-
-#else
-
 namespace {
 
-// Read the first line of a sysfs attribute file.
 std::string read_attr(const std::string& path) {
     std::ifstream f(path);
     if (!f) return "";
@@ -47,8 +38,6 @@ std::string read_attr(const std::string& path) {
     return s;
 }
 
-// Extract the last BDF token (XXXX:XX:XX.X) from a sysfs path string.
-// There can be multiple PCI bridges in the path; we want the leaf device.
 std::string extract_bdf(const std::string& path) {
     static const std::regex kBdf("[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-9a-f]");
     std::smatch m;
@@ -61,7 +50,6 @@ std::string extract_bdf(const std::string& path) {
     return last;
 }
 
-// Read the DAX device capacity from its sysfs 'size' attribute.
 uint64_t read_dax_size(const std::string& dax_name) {
     const std::string path = "/sys/bus/dax/devices/" + dax_name + "/size";
     const std::string val  = read_attr(path);
@@ -69,17 +57,14 @@ uint64_t read_dax_size(const std::string& dax_name) {
     try { return std::stoull(val, nullptr, 0); } catch (...) { return 0; }
 }
 
-// Probe resource{0,2,4} sysfs files; return the index of the first non-empty one.
-// The sysfs resource file's st_size == BAR window size in bytes.
 uint32_t detect_bar_index(const std::string& bdf) {
     const std::string base = "/sys/bus/pci/devices/" + bdf + "/resource";
     for (uint32_t idx : {2u, 0u, 4u}) {
         struct stat st{};
-        if (stat((base + std::to_string(idx)).c_str(), &st) == 0 && st.st_size > 0) {
+        if (stat((base + std::to_string(idx)).c_str(), &st) == 0 && st.st_size > 0)
             return idx;
-        }
     }
-    return 2; // CXL devices conventionally use BAR2
+    return 2;
 }
 
 } // namespace
@@ -87,7 +72,6 @@ uint32_t detect_bar_index(const std::string& bdf) {
 std::vector<CxlDeviceInfo> enumerate_cxl_devices() {
     std::vector<CxlDeviceInfo> result;
 
-    // Walk /sys/bus/dax/devices/ looking for dax* entries.
     const char* const kDaxBus = "/sys/bus/dax/devices";
     DIR* dir = opendir(kDaxBus);
     if (!dir) return result;
@@ -95,11 +79,8 @@ std::vector<CxlDeviceInfo> enumerate_cxl_devices() {
     struct dirent* ent;
     while ((ent = readdir(dir)) != nullptr) {
         const std::string name(ent->d_name);
-        // DAX device names look like dax0.0, dax1.0, dax1.1, …
         if (name.rfind("dax", 0) != 0) continue;
 
-        // Resolve the symlink to its canonical sysfs path so we can extract
-        // the PCI BDF from the path components.
         const std::string link = std::string(kDaxBus) + "/" + name;
         char real_buf[PATH_MAX] = {};
         const std::string real_path =
@@ -122,5 +103,3 @@ std::vector<CxlDeviceInfo> enumerate_cxl_devices() {
 
     return result;
 }
-
-#endif // __linux__

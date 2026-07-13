@@ -6,7 +6,6 @@
 #include <iomanip>
 #include <iostream>
 
-#ifdef __linux__
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -15,21 +14,14 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <emmintrin.h>
 #endif
-#endif
 
-// ── constants ────────────────────────────────────────────────────────────────
-
-static constexpr uint64_t kTestBytes      = 4ULL * 1024 * 1024; // 4 MiB per device
+static constexpr uint64_t kTestBytes      = 4ULL * 1024 * 1024;
 static constexpr uint64_t kWordBytes      = sizeof(uint64_t);
-static constexpr uint64_t kCacheLineWords = 64 / kWordBytes;     // 8 words per cache line
-
-// ── helpers ──────────────────────────────────────────────────────────────────
+static constexpr uint64_t kCacheLineWords = 64 / kWordBytes;
 
 static uint64_t test_pattern(uint64_t word_index) {
     return (word_index * 0x9E3779B97F4A7C15ULL) ^ 0xC0FFEE00DEADBEEFULL;
 }
-
-#ifdef __linux__
 
 static void clflush_line(volatile void* p) {
 #if defined(__x86_64__) || defined(__i386__)
@@ -47,8 +39,6 @@ static void mem_fence() {
 #endif
 }
 
-// ── per-device test ──────────────────────────────────────────────────────────
-
 static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
     std::cout << "\n[Device " << idx << "] " << dev.dax_path;
     if (!dev.bdf.empty()) std::cout << "  bdf=" << dev.bdf;
@@ -62,7 +52,6 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
     const uint64_t map_bytes = std::min<uint64_t>(dev.dax_size_bytes, kTestBytes);
     const uint64_t n_words   = map_bytes / kWordBytes;
 
-    // ── open DAX character device ─────────────────────────────────────────
     const int fd = open(dev.dax_path.c_str(), O_RDWR);
     if (fd < 0) {
         std::cout << "  [ERROR] open: " << std::strerror(errno)
@@ -70,7 +59,6 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
         return false;
     }
 
-    // ── mmap into process address space ───────────────────────────────────
     void* const mem = mmap(nullptr,
                            static_cast<size_t>(map_bytes),
                            PROT_READ | PROT_WRITE,
@@ -84,28 +72,19 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
 
     std::cout << "  mmap OK: " << (map_bytes >> 10) << " KiB @ " << mem << "\n";
 
-    volatile uint64_t* const words =
-        reinterpret_cast<volatile uint64_t*>(mem);
+    volatile uint64_t* const words = reinterpret_cast<volatile uint64_t*>(mem);
 
-    // ── write pass ────────────────────────────────────────────────────────
     std::cout << "  Writing " << n_words << " x 64-bit words ...\n";
-    for (uint64_t i = 0; i < n_words; ++i) {
+    for (uint64_t i = 0; i < n_words; ++i)
         words[i] = test_pattern(i);
-    }
-    // Ensure all stores are globally visible before flushing.
     mem_fence();
-    // Flush each cache line to the DAX medium.
-    for (uint64_t i = 0; i < n_words; i += kCacheLineWords) {
+    for (uint64_t i = 0; i < n_words; i += kCacheLineWords)
         clflush_line(const_cast<uint64_t*>(&words[i]));
-    }
     mem_fence();
 
-    // ── read-back pass ────────────────────────────────────────────────────
     std::cout << "  Reading back and verifying ...\n";
-    // Invalidate CPU cache so reads come from the DAX medium.
-    for (uint64_t i = 0; i < n_words; i += kCacheLineWords) {
+    for (uint64_t i = 0; i < n_words; i += kCacheLineWords)
         clflush_line(const_cast<uint64_t*>(&words[i]));
-    }
     mem_fence();
 
     uint64_t errors = 0;
@@ -131,22 +110,13 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
         std::cout << "  [PASS] All " << n_words << " words match.\n";
         return true;
     }
-    std::cout << "  [FAIL] " << errors << " / " << n_words
-              << " words mismatched.\n";
+    std::cout << "  [FAIL] " << errors << " / " << n_words << " words mismatched.\n";
     return false;
 }
-
-#endif // __linux__
-
-// ── public entry point ───────────────────────────────────────────────────────
 
 void run_cxl_test() {
     std::cout << "\n===== CXL Device Discovery and Memory R/W Test =====\n";
 
-#ifndef __linux__
-    std::cout << "[INFO] Linux only — test skipped.\n";
-#else
-    // Step 1: auto-detect all CXL DAX devices from sysfs
     const auto devices = enumerate_cxl_devices();
     print_cxl_devices(devices);
 
@@ -155,15 +125,13 @@ void run_cxl_test() {
         return;
     }
 
-    // Step 2: mmap each device and run a write-then-verify loop
     uint32_t pass_count = 0;
     uint32_t fail_count = 0;
     for (size_t i = 0; i < devices.size(); ++i) {
         if (test_one_device(devices[i], i)) ++pass_count;
-        else                                 ++fail_count;
+        else                                ++fail_count;
     }
 
     std::cout << "\n===== RESULT: " << pass_count << " passed, "
               << fail_count << " failed =====\n";
-#endif
 }
