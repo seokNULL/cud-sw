@@ -13,17 +13,14 @@ static const std::vector<int> kChBits   = { ADDR_CH_BITS  };
 
 // ── Bit manipulation ──────────────────────────────────────────────────────────
 
-// Extract a field from pa using the given bit-position list.
-// bits[0] maps to field bit 0 (LSB), bits[n-1] maps to field bit n-1 (MSB).
-static uint32_t extract_field(uint64_t pa, const std::vector<int>& bits) {
+uint32_t extract_pa_field(uint64_t pa, const std::vector<int>& bits) {
     uint32_t val = 0;
     for (size_t i = 0; i < bits.size(); ++i)
         val |= static_cast<uint32_t>((pa >> bits[i]) & 1ULL) << i;
     return val;
 }
 
-// Insert a field into pa at the given bit positions.
-static uint64_t insert_field(uint64_t pa, uint32_t field, const std::vector<int>& bits) {
+uint64_t insert_pa_field(uint64_t pa, uint32_t field, const std::vector<int>& bits) {
     for (size_t i = 0; i < bits.size(); ++i) {
         const uint64_t mask = 1ULL << bits[i];
         if ((field >> i) & 1u)
@@ -38,19 +35,19 @@ static uint64_t insert_field(uint64_t pa, uint32_t field, const std::vector<int>
 
 DramAddress decode_physical_addr(uint64_t pa) {
     DramAddress d;
-    d.channel = extract_field(pa, kChBits);
-    d.bank    = extract_field(pa, kBankBits);
-    d.row     = extract_field(pa, kRowBits);
-    d.col     = extract_field(pa, kColBits);
+    d.channel = extract_pa_field(pa, kChBits);
+    d.bank    = extract_pa_field(pa, kBankBits);
+    d.row     = extract_pa_field(pa, kRowBits);
+    d.col     = extract_pa_field(pa, kColBits);
     return d;
 }
 
 uint64_t encode_dram_addr(const DramAddress& addr) {
     uint64_t pa = 0;
-    pa = insert_field(pa, addr.channel, kChBits);
-    pa = insert_field(pa, addr.bank,    kBankBits);
-    pa = insert_field(pa, addr.row,     kRowBits);
-    pa = insert_field(pa, addr.col,     kColBits);
+    pa = insert_pa_field(pa, addr.channel, kChBits);
+    pa = insert_pa_field(pa, addr.bank,    kBankBits);
+    pa = insert_pa_field(pa, addr.row,     kRowBits);
+    pa = insert_pa_field(pa, addr.col,     kColBits);
     return pa;
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <vector>
 
 // ── DRAM topology ─────────────────────────────────────────────────────────────
 // Edit these to match your CXL device.
@@ -54,3 +55,11 @@ void print_dram_address(uint64_t pa, const DramAddress& addr);
 //   - no PA bit assigned to more than one field
 // Prints warnings and returns false on any violation.
 bool validate_address_map();
+
+// ── Low-level helpers (exposed for custom / split-field testing) ──────────────
+// Extract a DRAM field value from a PA using an arbitrary list of bit positions.
+// bit_positions[0] → field bit 0 (LSB), bit_positions[n-1] → field bit n-1 (MSB).
+uint32_t extract_pa_field(uint64_t pa, const std::vector<int>& bit_positions);
+
+// Insert a DRAM field value into a PA at the given bit positions.
+uint64_t insert_pa_field(uint64_t pa, uint32_t value, const std::vector<int>& bit_positions);
