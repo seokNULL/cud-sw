@@ -39,25 +39,22 @@ std::string read_attr(const std::string& path) {
 }
 
 // Parse one line of /sys/bus/pci/devices/<bdf>/resource:
-// format: "0xSTART 0xEND 0xFLAGS"
-// Returns BAR size = end - start + 1, or 0 if the BAR is absent/IO.
+// "0xSTART 0xEND 0xFLAGS" → returns end - start + 1, or 0.
 size_t parse_resource_line(const std::string& line) {
     try {
-        size_t pos  = 0;
+        size_t pos = 0;
         uint64_t start = std::stoull(line, &pos, 16);
         while (pos < line.size() && line[pos] == ' ') ++pos;
         size_t pos2 = 0;
-        uint64_t end   = std::stoull(line.substr(pos), &pos2, 16);
+        uint64_t end = std::stoull(line.substr(pos), &pos2, 16);
         pos += pos2;
         while (pos < line.size() && line[pos] == ' ') ++pos;
         uint64_t flags = std::stoull(line.substr(pos), nullptr, 16);
-        // Bit 0 = PCI_IORESOURCE_IO; skip IO BARs and absent BARs.
         if (start == 0 || end < start || (flags & 0x1)) return 0;
         return static_cast<size_t>(end - start + 1);
     } catch (...) { return 0; }
 }
 
-// Read BAR size for bar_index from the text resource file.
 size_t read_bar_size(const std::string& bdf, uint32_t bar_index) {
     const std::string path = "/sys/bus/pci/devices/" + bdf + "/resource";
     std::ifstream f(path);
@@ -97,7 +94,6 @@ uint64_t read_dax_size(const std::string& dax_name) {
     try { return std::stoull(val, nullptr, 0); } catch (...) { return 0; }
 }
 
-// Find the first memory BAR index with non-zero size, trying 2, 0, 4.
 uint32_t detect_bar_index(const std::string& bdf) {
     for (uint32_t idx : {2u, 0u, 4u}) {
         if (read_bar_size(bdf, idx) > 0) return idx;
