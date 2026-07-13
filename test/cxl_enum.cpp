@@ -94,7 +94,7 @@ static bool test_one_device(const CxlDeviceInfo& dev, size_t idx) {
     return false;
 }
 
-void run_cxl_test() {
+void run_cxl_enum() {
     std::cout << "\n===== CXL Device Discovery and Memory R/W Test =====\n";
 
     const auto devices = enumerate_cxl_devices();

@@ -1,7 +1,7 @@
 #include <iostream>
 
-void run_cxl_test();
-void run_addr_map_test();
+void run_cxl_enum();
+void run_cxl_addr_map();
 
 static void print_menu() {
     std::cout << "\n===== CXL Test Menu =====\n"
@@ -17,9 +17,9 @@ int main() {
         print_menu();
         std::cin >> choice;
         switch (choice) {
-        case 1: run_cxl_test();      break;
-        case 2: run_addr_map_test(); break;
-        case 0: std::cout << "Goodbye.\n"; break;
+        case 1: run_cxl_enum();      break;
+        case 2: run_cxl_addr_map(); break;
+        case 0: std::cout << "EXIT.\n"; break;
         default: std::cout << "Invalid selection.\n"; break;
         }
     } while (choice != 0);
