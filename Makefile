@@ -1,8 +1,13 @@
 CXX      = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude
 
-SRCS = main.cpp test/cxl_test.cpp src/cxl/enumerator.cpp
-OBJS = $(SRCS:.cpp=.o)
+SRCS = main.cpp \
+       test/cxl_test.cpp \
+       test/cxl_addr_test.cpp \
+       src/cxl/enumerator.cpp \
+       src/cxl/address_map.cpp
+
+OBJS   = $(SRCS:.cpp=.o)
 TARGET = cxl_runner
 
 .PHONY: all clean
