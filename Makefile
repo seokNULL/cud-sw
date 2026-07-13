@@ -10,7 +10,8 @@ SRCS = main.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \
        src/cxl/mem.cpp \
-       src/cud/interface.cpp
+       src/cud/interface.cpp \
+       src/cud/instruction.cpp
 
 OBJS   = $(SRCS:.cpp=.o)
 TARGET = cxl_runner

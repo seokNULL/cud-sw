@@ -3,6 +3,7 @@
 #include <vector>
 #include "cxl/mem.h"
 #include "cxl/io.h"
+#include "cud/instruction.h"
 
 // ── CUD software interface ────────────────────────────────────────────────────
 // Sits on top of CxlMem (CXL.mem data path) and CxlIo (CXL.io register path).
@@ -13,10 +14,6 @@
 //   cud_write_instructions() → push instruction list into CXL.io BAR
 //   cud_poll_done()          → wait for CUD completion
 //   cud_read_row()           → retrieve result from CXL.mem
-
-// Opaque CUD instruction word — 64-bit wide.
-// Encoding is defined by the instruction generator (TBD).
-using CudInst = uint64_t;
 
 // ── 1. Write input data (CXL.mem) ────────────────────────────────────────────
 

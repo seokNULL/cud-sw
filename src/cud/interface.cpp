@@ -61,7 +61,7 @@ void cud_write_row(CxlMem& mem, uint32_t bank, uint32_t row,
 void cud_write_instructions(CxlIo& io, uint64_t base_offset,
                             const std::vector<CudInst>& insts) {
     for (size_t i = 0; i < insts.size(); ++i)
-        io.write64(base_offset + i * sizeof(CudInst), insts[i]);
+        io.write32(base_offset + i * sizeof(CudInst), insts[i]);
 }
 
 // ── 3. Poll for done ──────────────────────────────────────────────────────────
