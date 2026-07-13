@@ -58,9 +58,3 @@ using CudInst = uint32_t;
 // Row-to-row data copy: src_pa → dst_pa.
 // Generated list: ROWCOPY_SRC(src) | ROWCOPY_DST(dst, last=1) | END
 std::vector<CudInst> cud_data_copy(uint64_t src_pa, uint64_t dst_pa);
-
-// 3-input majority on three rows at row_pa[0..2].
-// frac_pos [1:0]: fractional position field for each MAJ3 instruction.
-// Generated list: MAJ3(row0) | MAJ3(row1) | MAJ3(row2) | END
-std::vector<CudInst> cud_maj3(uint64_t row0_pa, uint64_t row1_pa,
-                               uint64_t row2_pa, uint32_t frac_pos);

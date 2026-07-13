@@ -6,6 +6,7 @@ SRCS = main.cpp \
        test/cxl_addr.cpp \
        test/cxl_io.cpp \
        test/cxl_mem.cpp \
+       test/cud_demo.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \
