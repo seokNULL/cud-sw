@@ -9,7 +9,8 @@ SRCS = main.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \
-       src/cxl/mem.cpp
+       src/cxl/mem.cpp \
+       src/cud/stack.cpp
 
 OBJS   = $(SRCS:.cpp=.o)
 TARGET = cxl_runner
