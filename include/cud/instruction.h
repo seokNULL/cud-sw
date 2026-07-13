@@ -21,11 +21,11 @@ using CudInst = uint32_t;
 
 #define CUD_ROW_MASK        0x1FFFFu                      // bits [16: 0]
 
-#define CUD_BA_SHIFT        17u
-#define CUD_BA_MASK         (0x3u  << CUD_BA_SHIFT)      // bits [18:17]
+#define CUD_BA_SHIFT        19u
+#define CUD_BA_MASK         (0x3u  << CUD_BA_SHIFT)      // bits [20:19]
 
-#define CUD_BG_SHIFT        19u
-#define CUD_BG_MASK         (0x3u  << CUD_BG_SHIFT)      // bits [20:19]
+#define CUD_BG_SHIFT        17u
+#define CUD_BG_MASK         (0x3u  << CUD_BG_SHIFT)      // bits [18:17]
 
 // rowcopy_dst only
 #define CUD_LAST_SHIFT      21u
@@ -38,9 +38,9 @@ using CudInst = uint32_t;
 // mb_entry only
 #define CUD_MB_NUM_MASK     0x3u                          // bits [ 1: 0]
 
-// ── bank[3:0] → BG / BA (bank[3:2]=BG, bank[1:0]=BA) ───────────────────────
-#define CUD_BANK_TO_BG(bank)  (((uint32_t)(bank) >> 2) & 0x3u)
-#define CUD_BANK_TO_BA(bank)  ( (uint32_t)(bank)       & 0x3u)
+// ── bank[3:0] → BA / BG (bank[3:2]=BA, bank[1:0]=BG) ───────────────────────
+#define CUD_BANK_TO_BA(bank)  (((uint32_t)(bank) >> 2) & 0x3u)
+#define CUD_BANK_TO_BG(bank)  ( (uint32_t)(bank)       & 0x3u)
 
 // ── Field-insert macros ───────────────────────────────────────────────────────
 #define CUD_FIELD_OPCODE(op)  (((uint32_t)(op))   << CUD_OPCODE_SHIFT)
