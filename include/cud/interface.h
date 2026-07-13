@@ -5,6 +5,12 @@
 #include "cxl/io.h"
 #include "cud/instruction.h"
 
+// ── Device initialisation ─────────────────────────────────────────────────────
+
+// Open the first available CXL device: CxlMem via DAX, CxlIo via PCI BAR.
+// Prints a diagnostics message and returns false on any failure.
+bool CxlInit(CxlMem& mem, CxlIo& io);
+
 // ── CUD software interface ────────────────────────────────────────────────────
 // Sits on top of CxlMem (CXL.mem data path) and CxlIo (CXL.io register path).
 // Address-to-physical mapping comes from include/cxl/address_map.h.

@@ -1,11 +1,47 @@
 #include "../../include/cud/interface.h"
 #include "../../include/cxl/address_map.h"
+#include "../../include/cxl/enumerator.h"
+
+#include <iostream>
 
 #include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <emmintrin.h>  // _mm_clflush, _mm_mfence, _mm_pause
 #include <vector>
+
+// ── Device initialisation ─────────────────────────────────────────────────────
+
+bool CxlInit(CxlMem& mem, CxlIo& io) {
+    const auto mem_devs = enumerate_cxl_devices();
+    if (mem_devs.empty()) {
+        std::cerr << "[CxlInit] No CXL DAX devices found "
+                     "(checked /sys/bus/dax/devices/dax*).\n";
+        return false;
+    }
+
+    const auto io_devs = enumerate_cxl_io_devices();
+    if (io_devs.empty()) {
+        std::cerr << "[CxlInit] No CXL IO devices found "
+                     "(checked PCI class 0x0502xx and /sys/bus/cxl/devices/mem*).\n";
+        return false;
+    }
+
+    if (!mem.open(mem_devs[0].dax_path)) {
+        std::cerr << "[CxlInit] CxlMem(" << mem_devs[0].dax_path
+                  << "): " << mem.last_error() << "\n";
+        return false;
+    }
+
+    if (!io.open(io_devs[0].bdf, io_devs[0].bar_index)) {
+        std::cerr << "[CxlInit] CxlIo(" << io_devs[0].bdf
+                  << " BAR" << io_devs[0].bar_index
+                  << "): " << io.last_error() << "\n";
+        return false;
+    }
+
+    return true;
+}
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -135,5 +136,83 @@ std::vector<CxlDeviceInfo> enumerate_cxl_devices() {
                   return a.dax_path < b.dax_path;
               });
 
+    return result;
+}
+
+// ── CXL.io device enumeration ─────────────────────────────────────────────────
+
+namespace {
+
+// Scan /sys/bus/pci/devices/<bdf>/class; keep entries where (class >> 8) == 0x0502
+// (PCI_CLASS_MEMORY_CXL = 0x050210 — class=05h Memory, subclass=02h CXL).
+static std::vector<std::string> io_scan_by_pci_class() {
+    std::vector<std::string> result;
+    DIR* dir = opendir("/sys/bus/pci/devices");
+    if (!dir) return result;
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        const std::string bdf(ent->d_name);
+        const std::string val = read_attr("/sys/bus/pci/devices/" + bdf + "/class");
+        if (val.empty()) continue;
+        try {
+            if ((std::stoul(val, nullptr, 16) >> 8) == 0x0502)
+                result.push_back(bdf);
+        } catch (...) {}
+    }
+    closedir(dir);
+    return result;
+}
+
+// Walk /sys/bus/cxl/devices/mem* → realpath → extract BDF component.
+static std::vector<std::string> io_scan_by_cxl_bus() {
+    std::vector<std::string> result;
+    DIR* dir = opendir("/sys/bus/cxl/devices");
+    if (!dir) return result;
+    static const std::regex kMem("mem[0-9]+");
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        const std::string name(ent->d_name);
+        if (!std::regex_match(name, kMem)) continue;
+        char real_buf[PATH_MAX] = {};
+        if (!realpath(("/sys/bus/cxl/devices/" + name).c_str(), real_buf)) continue;
+        const std::string bdf = extract_bdf(real_buf);
+        if (!bdf.empty()) result.push_back(bdf);
+    }
+    closedir(dir);
+    return result;
+}
+
+// Detect the first valid BAR for bdf by open()+fstat() on each resource file.
+// Tries BAR 2, 0, 4 in order (BAR 2 = CXL Component Register Interface).
+static uint32_t io_detect_bar(const std::string& bdf) {
+    for (uint32_t idx : {2u, 0u, 4u}) {
+        const std::string path = "/sys/bus/pci/devices/" + bdf +
+                                 "/resource" + std::to_string(idx);
+        int fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) continue;
+        struct stat st{};
+        const bool valid = (fstat(fd, &st) == 0 && st.st_size > 0);
+        ::close(fd);
+        if (valid) return idx;
+    }
+    return 2;
+}
+
+} // namespace (io helpers)
+
+std::vector<CxlIoDevice> enumerate_cxl_io_devices() {
+    // Merge PCI class scan (primary) with CXL bus scan (secondary).
+    auto bdfs = io_scan_by_pci_class();
+    for (const auto& b : io_scan_by_cxl_bus()) {
+        if (std::find(bdfs.begin(), bdfs.end(), b) == bdfs.end())
+            bdfs.push_back(b);
+    }
+    std::sort(bdfs.begin(), bdfs.end());
+    bdfs.erase(std::unique(bdfs.begin(), bdfs.end()), bdfs.end());
+
+    std::vector<CxlIoDevice> result;
+    result.reserve(bdfs.size());
+    for (const auto& bdf : bdfs)
+        result.push_back({bdf, io_detect_bar(bdf)});
     return result;
 }

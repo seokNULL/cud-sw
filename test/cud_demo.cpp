@@ -1,9 +1,7 @@
-#include "../include/cxl/enumerator.h"
 #include "../include/cxl/address_map.h"
 #include "../include/cud/interface.h"
 #include "../include/cud/instruction.h"
 
-#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <vector>
@@ -43,29 +41,11 @@ static bool rows_equal(const std::vector<uint64_t>& a,
 void run_cud_demo() {
     std::cout << "\n===== CUD Data Copy Demo =====\n";
 
-    // ── Open devices ─────────────────────────────────────────────────────────
-    const auto devices = enumerate_cxl_devices();
-    if (devices.empty()) {
-        std::cout << "[INFO] No CXL DAX devices found — cannot run demo.\n";
-        return;
-    }
-    const auto& dev = devices[0];
-
     CxlMem mem;
-    if (!mem.open(dev.dax_path)) {
-        std::cout << "[FAIL] CxlMem open: " << mem.last_error() << "\n";
-        return;
-    }
+    CxlIo  io;
+    if (!CxlInit(mem, io)) return;
 
-    CxlIo io;
-    if (!io.open(dev.bdf, dev.bar_index)) {
-        std::cout << "[FAIL] CxlIo  open: " << io.last_error() << "\n";
-        return;
-    }
-
-    std::cout << "[INFO] mem=" << dev.dax_path
-              << "  io=" << dev.bdf << " BAR" << dev.bar_index << "\n"
-              << "[INFO] src=bank" << kSrcBank << "/row" << kSrcRow
+    std::cout << "[INFO] src=bank" << kSrcBank << "/row" << kSrcRow
               << "  dst=bank" << kDstBank << "/row" << kDstRow << "\n";
 
     // PA of column 0 in each row — used as the row identifier for instruction
