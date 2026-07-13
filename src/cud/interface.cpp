@@ -1,4 +1,4 @@
-#include "../../include/cud/stack.h"
+#include "../../include/cud/interface.h"
 #include "../../include/cxl/address_map.h"
 
 #include <algorithm>

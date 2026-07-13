@@ -4,7 +4,7 @@
 #include "cxl/mem.h"
 #include "cxl/io.h"
 
-// ── CUD software stack ────────────────────────────────────────────────────────
+// ── CUD software interface ────────────────────────────────────────────────────
 // Sits on top of CxlMem (CXL.mem data path) and CxlIo (CXL.io register path).
 // Address-to-physical mapping comes from include/cxl/address_map.h.
 //
