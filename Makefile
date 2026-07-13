@@ -11,14 +11,15 @@ CUD_SRCS = src/cud/address.cpp \
            src/cud/ops_mult.cpp
 
 CXL_SRCS = src/cxl/driver.cpp \
-           src/cxl/device.cpp
+           src/cxl/device.cpp \
+           src/cxl/enumerator.cpp
 
 COMMON_SRCS = $(CUD_SRCS) $(CXL_SRCS)
 
 MAIN_TARGET = cud_runner
 HW_TARGET   = cud_hw_test
 
-MAIN_SRCS   = main.cpp $(COMMON_SRCS)
+MAIN_SRCS   = main.cpp test/cxl_test.cpp $(COMMON_SRCS)
 HW_SRCS     = test/hw_test.cpp $(COMMON_SRCS)
 
 MAIN_OBJS   = $(MAIN_SRCS:.cpp=.o)

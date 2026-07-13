@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+// Defined in test/cxl_test.cpp
+void run_cxl_test();
+
 static constexpr uint32_t DEMO_BANK = 0;
 
 static std::vector<uint64_t> make_addr_vec(uint32_t bank,
@@ -40,6 +43,7 @@ static void print_menu() {
               << " [19]  mult_4bit_csa            4x4-bit multiplier with CSA scheduling\n"
               << " [20]  mult_4bit_csa_via_maj3   CSA 4x4-bit multiplier via MAJ3\n"
               << " [21]  mult_nbit               N-bit multiplier\n"
+              << " [22]  cxl_test             CXL device discovery + mmap read/write test\n"
               << "  [0]  Exit\n"
               << "Select: ";
 }
@@ -358,6 +362,11 @@ int main() {
             uops = mult_nbit(srcA, srcB, prod_m0);
             break;
         }
+
+        case 22:
+            run_cxl_test();
+            uops.clear(); // no u-ops to print; test handles its own output
+            break;
 
         default:
             std::cout << "Invalid selection.\n";
