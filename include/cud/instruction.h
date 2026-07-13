@@ -44,31 +44,23 @@ using CudInst = uint32_t;
 
 // ── Field-insert macros ───────────────────────────────────────────────────────
 #define CUD_FIELD_OPCODE(op)  (((uint32_t)(op))   << CUD_OPCODE_SHIFT)
-#define CUD_FIELD_BG(bg)      (((uint32_t)(bg))   << CUD_BG_SHIFT)
 #define CUD_FIELD_BA(ba)      (((uint32_t)(ba))   << CUD_BA_SHIFT)
+#define CUD_FIELD_BG(bg)      (((uint32_t)(bg))   << CUD_BG_SHIFT)
 #define CUD_FIELD_ROW(row)    ( (uint32_t)(row)   &  CUD_ROW_MASK)
 #define CUD_FIELD_LAST        (1u                 << CUD_LAST_SHIFT)
 #define CUD_FIELD_FRAC(frac)  (((uint32_t)(frac)) << CUD_FRAC_SHIFT)
 #define CUD_FIELD_MB_NUM(n)   ( (uint32_t)(n)     &  CUD_MB_NUM_MASK)
 
-// ── Instruction generators ────────────────────────────────────────────────────
+// ── CUD kernel instruction generators ────────────────────────────────────────
+// Each function encodes a complete CUD operation and returns the full
+// instruction list (including END).
 
-// Append an END instruction (opcode only, no payload).
-void append_end(std::vector<CudInst>& insts);
+// Row-to-row data copy: src_pa → dst_pa.
+// Generated list: ROWCOPY_SRC(src) | ROWCOPY_DST(dst, last=1) | END
+std::vector<CudInst> cud_data_copy(uint64_t src_pa, uint64_t dst_pa);
 
-// Append ROWCOPY_SRC + ROWCOPY_DST for a single row-to-row copy.
-// Extracts BG, BA, row from each physical address via decode_physical_addr().
-// last bit in ROWCOPY_DST is set to 1 (single-destination copy).
-void append_rowcopy(uint64_t src_pa, uint64_t dst_pa,
-                    std::vector<CudInst>& insts);
-
-// Append a MAJ3 instruction.
-// frac_pos [1:0]: fractional position field (bits [25:24]).
-void append_maj3(uint64_t pa, uint32_t frac_pos,
-                 std::vector<CudInst>& insts);
-
-// Append MULTI_BANK_ENTRY; num_banks [1:0] = number of banks acting together.
-void append_mb_entry(uint32_t num_banks, std::vector<CudInst>& insts);
-
-// Append MULTI_BANK_EXIT (opcode only, no payload).
-void append_mb_exit(std::vector<CudInst>& insts);
+// 3-input majority on three rows at row_pa[0..2].
+// frac_pos [1:0]: fractional position field for each MAJ3 instruction.
+// Generated list: MAJ3(row0) | MAJ3(row1) | MAJ3(row2) | END
+std::vector<CudInst> cud_maj3(uint64_t row0_pa, uint64_t row1_pa,
+                               uint64_t row2_pa, uint32_t frac_pos);
