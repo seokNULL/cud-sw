@@ -31,6 +31,27 @@ uint64_t insert_pa_field(uint64_t pa, uint32_t field, const std::vector<int>& bi
     return pa;
 }
 
+// ── Mat lookup ────────────────────────────────────────────────────────────────
+//
+// Row offsets marking the start of each mat within one 7-mat cycle.
+// Index 7 is the sentinel (= MAT_ROWS_PER_CYCLE = 8192).
+static constexpr uint32_t kCycleBreaks[MAT_PER_CYCLE + 1] = {
+    0, 1184, 2368, 3552, 4640, 5824, 7008, MAT_ROWS_PER_CYCLE
+};
+
+uint32_t row_to_mat(uint32_t row) {
+    const uint32_t cycle      = row / MAT_ROWS_PER_CYCLE;
+    const uint32_t row_in_cyc = row % MAT_ROWS_PER_CYCLE;
+    uint32_t mat_in_cyc = MAT_PER_CYCLE - 1;
+    for (uint32_t i = 0; i < MAT_PER_CYCLE; ++i) {
+        if (row_in_cyc < kCycleBreaks[i + 1]) {
+            mat_in_cyc = i;
+            break;
+        }
+    }
+    return cycle * MAT_PER_CYCLE + mat_in_cyc;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 DramAddress decode_physical_addr(uint64_t pa) {
@@ -39,6 +60,7 @@ DramAddress decode_physical_addr(uint64_t pa) {
     d.bank    = extract_pa_field(pa, kBankBits);
     d.row     = extract_pa_field(pa, kRowBits);
     d.col     = extract_pa_field(pa, kColBits);
+    d.mat     = row_to_mat(d.row);
     return d;
 }
 
@@ -55,6 +77,7 @@ void print_dram_address(uint64_t pa, const DramAddress& d) {
     std::cout << "  PA=0x" << std::hex << pa << std::dec
               << "  ch="   << d.channel
               << "  bank=" << d.bank
+              << "  mat="  << d.mat
               << "  row="  << d.row
               << "  col="  << d.col << "\n";
 }
