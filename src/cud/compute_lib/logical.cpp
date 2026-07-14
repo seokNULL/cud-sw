@@ -4,10 +4,10 @@
 
 // ── Fixed compute-row configuration ──────────────────────────────────────────
 // 4-row set follows the CUD DRAM grouping pattern {n, n+1, n+8, n+9}.
-static constexpr uint32_t kCmpRow0    = 0xFF00u;
-static constexpr uint32_t kCmpRow1    = 0xFF01u;
-static constexpr uint32_t kCmpRow2    = 0xFF08u;
-static constexpr uint32_t kCmpRowFrac = 0xFF09u;
+static constexpr uint32_t kCmpRow0    = 0x0010u;
+static constexpr uint32_t kCmpRow1    = 0x0011u;
+static constexpr uint32_t kCmpRow2    = 0x0018u;
+static constexpr uint32_t kCmpRowFrac = 0x0019u;
 static constexpr uint32_t kFracPos    = 3u;
 
 // AND and OR differ only in the bias row (zero for AND, one for OR).
@@ -43,8 +43,6 @@ static std::vector<CudInst> build_maj3_op(uint64_t a_pa, uint64_t b_pa,
 
     // MAJ3 on each of the three non-frac rows
     insts.push_back(cud_make_maj3(cmp0, kFracPos, kMode));
-    insts.push_back(cud_make_maj3(cmp1, kFracPos, kMode));
-    insts.push_back(cud_make_maj3(cmp2, kFracPos, kMode));
 
     // Copy result (held in frac row after MAJ3) to destination
     insts.push_back(cud_make_rowcopy_src(cmpFrac));

@@ -2,6 +2,7 @@
 #include "test/test_config.h"
 
 #include <iostream>
+#include <random>
 
 void run_cxl_enum();
 void run_cxl_addr_map();
@@ -11,32 +12,36 @@ void run_cud_interface_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 void run_cud_library_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 
 // ── CUD test configuration ────────────────────────────────────────────────────
-// Edit this block to change bank/row assignments, input patterns, and register
-// offsets without touching any test file.
-//
-//   Interface test (DataCopy) uses: bank, src_row, dst_row, copy_pattern
-//   Library tests  (AND, OR)  use:  bank, row_a, row_b, row_bias, row_dst,
-//                                   pattern_a, pattern_b
-static const CudTestConfig kCudCfg = {
-    .bank         = 0,
+// Bank/row assignments and register offsets are fixed here.
+// copy_pattern, pattern_a, and pattern_b are randomised per test run.
+static CudTestConfig make_cud_cfg() {
+    std::mt19937_64 rng(std::random_device{}());
+    const uint64_t pa = rng();
+    const uint64_t pb = rng();
+    const uint64_t pc = rng();
+    std::cout << "  [pattern] copy=0x" << std::hex << pc
+              << "  a=0x" << pa << "  b=0x" << pb << std::dec << "\n";
+    return CudTestConfig{
+        .bank         = 0,
 
-    .src_row      = 0,
-    .dst_row      = 1,
+        .src_row      = 0,
+        .dst_row      = 1,
 
-    .row_a        = 0,
-    .row_b        = 1,
-    .row_bias     = 2,
-    .row_dst      = 3,
-    .row_zero     = 4,
+        .row_a        = 0,
+        .row_b        = 1,
+        .row_bias     = 2,
+        .row_dst      = 3,
+        .row_zero     = 4,
 
-    .copy_pattern = 0xDEADBEEFCAFEBABEULL,
-    .pattern_a    = 0xAAAAAAAAAAAAAAAAULL,
-    .pattern_b    = 0xCCCCCCCCCCCCCCCCULL,
+        .copy_pattern = pc,
+        .pattern_a    = pa,
+        .pattern_b    = pb,
 
-    .inst_base    = 0x0000,
-    .status_reg   = 0x0000,
-    .done_mask    = 0x1,
-};
+        .inst_base    = 0x0000,
+        .status_reg   = 0x0000,
+        .done_mask    = 0x1,
+    };
+}
 
 // ── CUD sub-menu ──────────────────────────────────────────────────────────────
 
@@ -57,9 +62,10 @@ static void run_cud_tests() {
     do {
         print_cud_menu();
         std::cin >> choice;
+        const CudTestConfig cfg = make_cud_cfg();
         switch (choice) {
-        case 1: run_cud_interface_tests(mem, io, kCudCfg); break;
-        case 2: run_cud_library_tests(mem, io, kCudCfg);   break;
+        case 1: run_cud_interface_tests(mem, io, cfg); break;
+        case 2: run_cud_library_tests(mem, io, cfg);   break;
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }
