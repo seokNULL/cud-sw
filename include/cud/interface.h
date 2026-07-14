@@ -43,7 +43,7 @@ void cud_write_row(CxlMem& mem,
 bool CudExecute(CxlIo&                      io,
                 const std::vector<CudInst>& insts,
                 uint64_t inst_base   = 0x0000,
-                uint64_t status_reg  = 0x0010,
+                uint64_t status_reg  = 0x0000,
                 uint32_t done_mask   = 0x1,
                 uint64_t timeout_us  = 1'000'000);
 

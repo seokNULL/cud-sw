@@ -16,7 +16,7 @@ static constexpr uint64_t kPattern    = 0xDEADBEEFCAFEBABEULL;
 
 // CXL.io register offsets (device-specific — adjust to match hardware)
 static constexpr uint64_t kInstBase   = 0x0000;  // instruction FIFO base
-static constexpr uint64_t kStatusReg  = 0x0010;  // completion status register
+static constexpr uint64_t kStatusReg  = 0x0000;  // completion status register
 static constexpr uint32_t kDoneMask   = 0x1;     // bit 0 = done
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
