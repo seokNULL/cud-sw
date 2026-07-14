@@ -9,6 +9,7 @@ SRCS = main.cpp \
        test/cxl_mem.cpp \
        test/cud_interface.cpp \
        test/cud_library.cpp \
+       test/fault_search.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \

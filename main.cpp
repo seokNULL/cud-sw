@@ -1,5 +1,6 @@
 #include "cud/interface.h"
 #include "test/test_config.h"
+#include "test/fault_search.h"
 
 #include <iostream>
 #include <random>
@@ -47,8 +48,9 @@ static CudTestConfig make_cud_cfg() {
 
 static void print_cud_menu() {
     std::cout << "\n  -- CUD API Verification --\n"
-              << "  [1]  Interface  (DataCopy: Write / Execute / Read)\n"
-              << "  [2]  Library    (AND, OR)\n"
+              << "  [1]  Fault Row Search\n"
+              << "  [2]  Interface  (DataCopy: Write / Execute / Read)\n"
+              << "  [3]  Library    (AND, OR)\n"
               << "  [0]  Back\n"
               << "  Select: ";
 }
@@ -62,10 +64,12 @@ static void run_cud_tests() {
     do {
         print_cud_menu();
         std::cin >> choice;
-        const CudTestConfig cfg = make_cud_cfg();
         switch (choice) {
-        case 1: run_cud_interface_tests(mem, io, cfg); break;
-        case 2: run_cud_library_tests(mem, io, cfg);   break;
+        case 1: run_fault_search(mem, io); break;
+        case 2: { const CudTestConfig cfg = make_cud_cfg();
+                  run_cud_interface_tests(mem, io, cfg); break; }
+        case 3: { const CudTestConfig cfg = make_cud_cfg();
+                  run_cud_library_tests(mem, io, cfg);   break; }
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }
