@@ -86,14 +86,14 @@ static bool poll_done(CxlIo& io, uint64_t status_reg,
 
 // ── 1. Write input data (CXL.mem) ────────────────────────────────────────────
 
-void cud_write_row(CxlMem& mem, uint32_t bank, uint32_t row, uint64_t pattern) {
+void CudWriteRow(CxlMem& mem, uint32_t bank, uint32_t row, uint64_t pattern) {
     const auto pas = row_pa_list(bank, row);
     for (uint64_t pa : pas)
         mem.write64(pa, pattern);
     flush_pa_set(mem, pas);
 }
 
-void cud_write_row(CxlMem& mem, uint32_t bank, uint32_t row,
+void CudWriteRow(CxlMem& mem, uint32_t bank, uint32_t row,
                    const std::vector<uint64_t>& patterns) {
     assert(patterns.size() == static_cast<size_t>(NUM_COL));
     const auto pas = row_pa_list(bank, row);
@@ -113,7 +113,7 @@ bool CudExecute(CxlIo& io, const std::vector<CudInst>& insts,
 
 // ── 3. Read result data (CXL.mem) ────────────────────────────────────────────
 
-std::vector<uint64_t> cud_read_row(CxlMem& mem, uint32_t bank, uint32_t row) {
+std::vector<uint64_t> CudReadRow(CxlMem& mem, uint32_t bank, uint32_t row) {
     const auto pas = row_pa_list(bank, row);
     flush_pa_set(mem, pas);  // invalidate before read — device wrote outside CPU cache
     std::vector<uint64_t> result(NUM_COL);

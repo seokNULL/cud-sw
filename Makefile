@@ -2,11 +2,12 @@ CXX      = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude
 
 SRCS = main.cpp \
+       test/utils.cpp \
        test/cxl_enum.cpp \
        test/cxl_addr.cpp \
        test/cxl_io.cpp \
        test/cxl_mem.cpp \
-       test/cud_demo.cpp \
+       test/cud_interface.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \

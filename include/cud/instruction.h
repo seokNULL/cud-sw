@@ -53,3 +53,26 @@ using CudInst = uint32_t;
 #define CUD_FIELD_LAST        (1u                 << CUD_LAST_SHIFT)
 #define CUD_FIELD_FRAC(frac)  (((uint32_t)(frac)) << CUD_FRAC_SHIFT)
 #define CUD_FIELD_MB_NUM(n)   ( (uint32_t)(n)     &  CUD_MB_NUM_MASK)
+
+// ── High-level kernel builders ────────────────────────────────────────────────
+// Validate inputs, build the complete instruction list (including END), and
+// return it ready for CudExecute(). These are the public API for instruction
+// generation; the compute_lib primitives are internal implementation details.
+
+#include <cstddef>
+#include <vector>
+
+// Row-to-row data copy: size_bytes must be a non-zero multiple of
+// CUD_ROW_SIZE_BYTES; src and dst must be in the same bank.
+std::vector<CudInst> CudDataCopy(uint64_t src_pa, uint64_t dst_pa,
+                                  size_t size_bytes);
+
+// Bitwise AND via MAJ3: dst = a AND b = MAJ3(a, b, 0).
+// zero_pa must point to a row pre-filled with all zeros; all PAs same bank.
+std::vector<CudInst> CudAnd(uint64_t a_pa, uint64_t b_pa,
+                             uint64_t zero_pa, uint64_t dst_pa);
+
+// Bitwise OR via MAJ3: dst = a OR b = MAJ3(a, b, 1).
+// one_pa must point to a row pre-filled with all ones; all PAs same bank.
+std::vector<CudInst> CudOr(uint64_t a_pa, uint64_t b_pa,
+                            uint64_t one_pa, uint64_t dst_pa);

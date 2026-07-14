@@ -23,17 +23,17 @@ bool CxlInit(CxlMem& mem, CxlIo& io);
 
 // Write a uniform 64-bit pattern to every column of the given (bank, row).
 // Flushes all written cache lines to CXL.mem before returning.
-void cud_write_row(CxlMem& mem,
-                   uint32_t bank,
-                   uint32_t row,
-                   uint64_t pattern);
+void CudWriteRow(CxlMem& mem,
+                 uint32_t bank,
+                 uint32_t row,
+                 uint64_t pattern);
 
 // Per-column variant.  patterns[col] is written to column col.
 // patterns.size() must equal NUM_COL.
-void cud_write_row(CxlMem& mem,
-                   uint32_t bank,
-                   uint32_t row,
-                   const std::vector<uint64_t>& patterns);
+void CudWriteRow(CxlMem& mem,
+                 uint32_t bank,
+                 uint32_t row,
+                 const std::vector<uint64_t>& patterns);
 
 // ── 2. Execute CUD instructions (CXL.io) ────────────────────────────────────
 
@@ -51,6 +51,6 @@ bool CudExecute(CxlIo&                      io,
 
 // Invalidate CPU cache for all columns of (bank, row), then read each column.
 // Returns a vector of NUM_COL uint64_t values in column order (col 0 first).
-std::vector<uint64_t> cud_read_row(CxlMem& mem,
-                                   uint32_t bank,
-                                   uint32_t row);
+std::vector<uint64_t> CudReadRow(CxlMem& mem,
+                                  uint32_t bank,
+                                  uint32_t row);
