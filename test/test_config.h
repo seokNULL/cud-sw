@@ -10,6 +10,7 @@ struct CudTestConfig {
     uint32_t row_b       = 1;   // Logical operand b
     uint32_t row_bias    = 2;   // Logical bias (zero for AND, one for OR)
     uint32_t row_dst     = 3;   // Logical result
+    uint32_t row_zero    = 4;   // Dedicated zero row for OR frac-row init
 
     // Input patterns
     uint64_t copy_pattern = 0xDEADBEEFCAFEBABEULL;

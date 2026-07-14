@@ -38,6 +38,9 @@ using CudInst = uint32_t;
 #define CUD_FRAC_SHIFT      24u
 #define CUD_FRAC_MASK       (0x3u  << CUD_FRAC_SHIFT)    // bits [25:24]
 
+#define CUD_MODE_SHIFT      21u
+#define CUD_MODE_MASK       (0x7u  << CUD_MODE_SHIFT)    // bits [23:21]
+
 // mb_entry only
 #define CUD_MB_NUM_MASK     0x3u                          // bits [ 1: 0]
 
@@ -52,6 +55,7 @@ using CudInst = uint32_t;
 #define CUD_FIELD_ROW(row)    ( (uint32_t)(row)   &  CUD_ROW_MASK)
 #define CUD_FIELD_LAST        (1u                 << CUD_LAST_SHIFT)
 #define CUD_FIELD_FRAC(frac)  (((uint32_t)(frac)) << CUD_FRAC_SHIFT)
+#define CUD_FIELD_MODE(m)     (((uint32_t)(m))    << CUD_MODE_SHIFT)
 #define CUD_FIELD_MB_NUM(n)   ( (uint32_t)(n)     &  CUD_MB_NUM_MASK)
 
 // ── High-level kernel builders ────────────────────────────────────────────────
@@ -73,6 +77,7 @@ std::vector<CudInst> CudAnd(uint64_t a_pa, uint64_t b_pa,
                              uint64_t zero_pa, uint64_t dst_pa);
 
 // Bitwise OR via MAJ3: dst = a OR b = MAJ3(a, b, 1).
-// one_pa must point to a row pre-filled with all ones; all PAs same bank.
+// one_pa must point to a row pre-filled with all ones; zero_pa must point to
+// a row pre-filled with all zeros (used to initialise the frac row); all PAs same bank.
 std::vector<CudInst> CudOr(uint64_t a_pa, uint64_t b_pa,
-                            uint64_t one_pa, uint64_t dst_pa);
+                            uint64_t one_pa, uint64_t zero_pa, uint64_t dst_pa);

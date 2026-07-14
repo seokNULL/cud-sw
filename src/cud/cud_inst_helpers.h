@@ -20,8 +20,8 @@ static inline CudInst cud_make_rowcopy_dst(uint64_t pa) {
     return CUD_FIELD_OPCODE(CUD_OP_ROWCOPY_DST) | CUD_FIELD_LAST | cud_addr_fields(pa);
 }
 
-static inline CudInst cud_make_maj3(uint64_t pa, uint32_t frac_pos) {
-    return CUD_FIELD_OPCODE(CUD_OP_MAJ3) | CUD_FIELD_FRAC(frac_pos) | cud_addr_fields(pa);
+static inline CudInst cud_make_maj3(uint64_t pa, uint32_t frac_pos, uint32_t mode) {
+    return CUD_FIELD_OPCODE(CUD_OP_MAJ3) | CUD_FIELD_FRAC(frac_pos) | CUD_FIELD_MODE(mode) | cud_addr_fields(pa);
 }
 
 static inline CudInst cud_make_end() {

@@ -34,10 +34,11 @@ std::vector<CudInst> CudAnd(uint64_t a_pa, uint64_t b_pa,
 }
 
 std::vector<CudInst> CudOr(uint64_t a_pa, uint64_t b_pa,
-                            uint64_t one_pa, uint64_t dst_pa) {
+                            uint64_t one_pa, uint64_t zero_pa, uint64_t dst_pa) {
     const uint32_t bank = decode_physical_addr(a_pa).bank;
-    assert(decode_physical_addr(b_pa).bank   == bank && "b must be in same bank as a");
-    assert(decode_physical_addr(one_pa).bank == bank && "one must be in same bank as a");
-    assert(decode_physical_addr(dst_pa).bank == bank && "dst must be in same bank as a");
-    return cud_or(a_pa, b_pa, one_pa, dst_pa);
+    assert(decode_physical_addr(b_pa).bank    == bank && "b must be in same bank as a");
+    assert(decode_physical_addr(one_pa).bank  == bank && "one must be in same bank as a");
+    assert(decode_physical_addr(zero_pa).bank == bank && "zero must be in same bank as a");
+    assert(decode_physical_addr(dst_pa).bank  == bank && "dst must be in same bank as a");
+    return cud_or(a_pa, b_pa, one_pa, zero_pa, dst_pa);
 }

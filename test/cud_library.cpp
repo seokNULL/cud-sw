@@ -55,13 +55,15 @@ static void test_or(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     CudWriteRow(mem, cfg.bank, cfg.row_a,    a);
     CudWriteRow(mem, cfg.bank, cfg.row_b,    b);
     CudWriteRow(mem, cfg.bank, cfg.row_bias, std::vector<uint64_t>(N, ~0ULL));
+    CudWriteRow(mem, cfg.bank, cfg.row_zero, std::vector<uint64_t>(N, 0ULL));
 
     const uint64_t a_pa    = encode_dram_addr({0, cfg.bank, cfg.row_a,    0});
     const uint64_t b_pa    = encode_dram_addr({0, cfg.bank, cfg.row_b,    0});
     const uint64_t bias_pa = encode_dram_addr({0, cfg.bank, cfg.row_bias, 0});
+    const uint64_t zero_pa = encode_dram_addr({0, cfg.bank, cfg.row_zero, 0});
     const uint64_t dst_pa  = encode_dram_addr({0, cfg.bank, cfg.row_dst,  0});
 
-    const auto insts = CudOr(a_pa, b_pa, bias_pa, dst_pa);
+    const auto insts = CudOr(a_pa, b_pa, bias_pa, zero_pa, dst_pa);
     if (!CudExecute(io, insts, cfg.inst_base, cfg.status_reg, cfg.done_mask)) {
         std::cout << "[FAIL] timeout\n";
         return;

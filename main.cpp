@@ -27,6 +27,7 @@ static const CudTestConfig kCudCfg = {
     .row_b        = 1,
     .row_bias     = 2,
     .row_dst      = 3,
+    .row_zero     = 4,
 
     .copy_pattern = 0xDEADBEEFCAFEBABEULL,
     .pattern_a    = 0xAAAAAAAAAAAAAAAAULL,
