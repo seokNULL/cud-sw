@@ -4,16 +4,18 @@ void run_cxl_enum();
 void run_cxl_addr_map();
 void run_cxl_io();
 void run_cxl_mem();
-void run_cud_interface();
+void run_cud_tests();
 
 static void print_menu() {
-    std::cout << "\n===== CXL Test Menu =====\n"
-              << "  [1]  CXL device discovery + DAX memory R/W test\n"
-              << "  [2]  DRAM address map decode/encode test\n"
-              << "  [3]  CXL.io  BAR register read\n"
-              << "  [4]  CXL.mem DAX read/write verify\n"
-              << "  [5]  CUD interface test (write / execute / read)\n"
-              << "  [0]  Exit\n"
+    std::cout << "\n===== CXL / CUD Test Suite =====\n"
+              << "\n  -- CXL Verification --\n"
+              << "  [1]  Device discovery\n"
+              << "  [2]  Address map decode/encode\n"
+              << "  [3]  CXL.io BAR register read\n"
+              << "  [4]  CXL.mem DAX read/write\n"
+              << "\n  -- CUD API Verification --\n"
+              << "  [5]  CUD operations\n"
+              << "\n  [0]  Exit\n"
               << "Select: ";
 }
 
@@ -27,7 +29,7 @@ int main() {
         case 2: run_cxl_addr_map(); break;
         case 3: run_cxl_io();       break;
         case 4: run_cxl_mem();      break;
-        case 5: run_cud_interface(); break;
+        case 5: run_cud_tests();    break;
         case 0: std::cout << "EXIT.\n"; break;
         default: std::cout << "Invalid selection.\n"; break;
         }
