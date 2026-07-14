@@ -7,5 +7,9 @@
 void print_row(const char* label, const std::vector<uint64_t>& row,
                size_t preview_cols = 4);
 
-// Return true if two row vectors are element-wise equal.
-bool rows_equal(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b);
+// Compare two rows bit by bit.  Prints each differing bit's column and bit
+// position (up to max_print entries), followed by a total error count.
+// Returns the total number of differing bits (0 = identical).
+size_t check_rows(const std::vector<uint64_t>& expected,
+                  const std::vector<uint64_t>& got,
+                  size_t max_print = 16);

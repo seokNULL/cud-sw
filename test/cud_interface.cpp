@@ -34,5 +34,6 @@ void run_cud_interface_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     print_row("[src    ]", src);
     print_row("[dst_cpu]", dst_cpu);
     print_row("[dst_cud]", dst_cud);
-    std::cout << (rows_equal(dst_cpu, dst_cud) ? "[PASS]" : "[FAIL]") << " DataCopy\n";
+    const size_t errs = check_rows(dst_cpu, dst_cud);
+    std::cout << (errs == 0 ? "[PASS]" : "[FAIL]") << " DataCopy\n";
 }
