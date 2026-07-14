@@ -12,7 +12,9 @@ SRCS = main.cpp \
        src/cxl/io.cpp \
        src/cxl/mem.cpp \
        src/cud/interface.cpp \
-       src/cud/instruction.cpp
+       src/cud/instruction.cpp \
+       src/cud/compute_lib/data_copy.cpp \
+       src/cud/compute_lib/logical.cpp
 
 OBJS   = $(SRCS:.cpp=.o)
 TARGET = cxl_runner

@@ -13,13 +13,11 @@ bool CxlInit(CxlMem& mem, CxlIo& io);
 
 // ── CUD software interface ────────────────────────────────────────────────────
 // Sits on top of CxlMem (CXL.mem data path) and CxlIo (CXL.io register path).
-// Address-to-physical mapping comes from include/cxl/address_map.h.
 //
 // Typical flow:
-//   cud_write_row()          → load input into CXL.mem
-//   cud_write_instructions() → push instruction list into CXL.io BAR
-//   cud_poll_done()          → wait for CUD completion
-//   cud_read_row()           → retrieve result from CXL.mem
+//   cud_write_row()  → load input data into CXL.mem
+//   CudExecute()     → write instruction list to CXL.io BAR and poll for done
+//   cud_read_row()   → retrieve result from CXL.mem
 
 // ── 1. Write input data (CXL.mem) ────────────────────────────────────────────
 
@@ -37,26 +35,19 @@ void cud_write_row(CxlMem& mem,
                    uint32_t row,
                    const std::vector<uint64_t>& patterns);
 
-// ── 2. Write CUD instructions (CXL.io) ───────────────────────────────────────
+// ── 2. Execute CUD instructions (CXL.io) ────────────────────────────────────
 
-// Write instructions sequentially to the CXL.io BAR starting at base_offset.
-// Each CudInst is written as a 64-bit word; index 0 goes to base_offset,
-// index 1 to base_offset+8, and so on.
-void cud_write_instructions(CxlIo& io,
-                            uint64_t base_offset,
-                            const std::vector<CudInst>& insts);
+// Write the instruction list to the CXL.io BAR starting at inst_base,
+// then spin on status_reg until (value & done_mask) != 0.
+// Returns true on success, false on timeout.
+bool CudExecute(CxlIo&                      io,
+                const std::vector<CudInst>& insts,
+                uint64_t inst_base   = 0x0000,
+                uint64_t status_reg  = 0x0010,
+                uint32_t done_mask   = 0x1,
+                uint64_t timeout_us  = 1'000'000);
 
-// ── 3. Poll for CUD completion (CXL.io) ──────────────────────────────────────
-
-// Read the 32-bit register at status_offset and spin until
-// (value & done_mask) != 0.
-// Returns true when done, false if timeout_us microseconds elapse first.
-bool cud_poll_done(CxlIo& io,
-                   uint64_t status_offset,
-                   uint32_t done_mask   = 0x1,
-                   uint64_t timeout_us  = 1'000'000);
-
-// ── 4. Read result data (CXL.mem) ────────────────────────────────────────────
+// ── 3. Read result data (CXL.mem) ────────────────────────────────────────────
 
 // Invalidate CPU cache for all columns of (bank, row), then read each column.
 // Returns a vector of NUM_COL uint64_t values in column order (col 0 first).

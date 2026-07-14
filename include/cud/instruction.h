@@ -1,9 +1,12 @@
 #pragma once
 #include <cstdint>
-#include <vector>
 
 // ── CUD instruction type (32-bit) ─────────────────────────────────────────────
 using CudInst = uint32_t;
+
+// ── Row size ─────────────────────────────────────────────────────────────────
+// One CUD operation unit: NUM_COL(1024) columns × 8 bytes = 8 KiB.
+#define CUD_ROW_SIZE_BYTES  8192u
 
 // ── Opcode values — bits [31:29] ─────────────────────────────────────────────
 #define CUD_OP_END          0x0u
@@ -50,11 +53,3 @@ using CudInst = uint32_t;
 #define CUD_FIELD_LAST        (1u                 << CUD_LAST_SHIFT)
 #define CUD_FIELD_FRAC(frac)  (((uint32_t)(frac)) << CUD_FRAC_SHIFT)
 #define CUD_FIELD_MB_NUM(n)   ( (uint32_t)(n)     &  CUD_MB_NUM_MASK)
-
-// ── CUD kernel instruction generators ────────────────────────────────────────
-// Each function encodes a complete CUD operation and returns the full
-// instruction list (including END).
-
-// Row-to-row data copy: src_pa → dst_pa.
-// Generated list: ROWCOPY_SRC(src) | ROWCOPY_DST(dst, last=1) | END
-std::vector<CudInst> cud_data_copy(uint64_t src_pa, uint64_t dst_pa);

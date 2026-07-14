@@ -1,6 +1,6 @@
 #include "../include/cxl/address_map.h"
 #include "../include/cud/interface.h"
-#include "../include/cud/instruction.h"
+#include "../include/cud/compute_lib/data_copy.h"
 
 #include <iomanip>
 #include <iostream>
@@ -73,13 +73,10 @@ void run_cud_demo() {
     // Step 1: load input into CXL.mem (already written above, but redo for clarity)
     cud_write_row(mem, kSrcBank, kSrcRow, kPattern);
 
-    // Step 2: generate instruction list and write to CXL.io BAR
-    const std::vector<CudInst> insts = cud_data_copy(src_pa, dst_pa);
+    // Step 2: generate instruction list and execute via CXL.io
+    const auto insts = cud_data_copy(src_pa, dst_pa, CUD_ROW_SIZE_BYTES);
     std::cout << "[inst] count=" << insts.size() << "\n";
-    cud_write_instructions(io, kInstBase, insts);
-
-    // Step 3: poll for CUD completion
-    if (!cud_poll_done(io, kStatusReg, kDoneMask)) {
+    if (!CudExecute(io, insts, kInstBase, kStatusReg, kDoneMask)) {
         std::cout << "[FAIL] CUD timed out\n";
         return;
     }
