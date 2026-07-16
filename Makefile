@@ -1,5 +1,6 @@
 CXX      = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude
+BUILDDIR = build
 
 SRCS = main.cpp \
        test/utils.cpp \
@@ -8,7 +9,9 @@ SRCS = main.cpp \
        test/cxl_io.cpp \
        test/cxl_mem.cpp \
        test/cud_interface.cpp \
-       test/cud_library.cpp \
+       test/instruction/rowcopy.cpp \
+       test/instruction/maj3.cpp \
+       test/logical/and_or.cpp \
        test/fault_search.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
@@ -19,8 +22,8 @@ SRCS = main.cpp \
        src/cud/compute_lib/data_copy.cpp \
        src/cud/compute_lib/logical.cpp
 
-OBJS   = $(SRCS:.cpp=.o)
-TARGET = cxl_runner
+OBJS   = $(SRCS:%.cpp=$(BUILDDIR)/%.o)
+TARGET = cud-cxl-run
 
 .PHONY: all clean
 
@@ -29,8 +32,9 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-%.o: %.cpp
+$(BUILDDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf $(BUILDDIR) $(TARGET)

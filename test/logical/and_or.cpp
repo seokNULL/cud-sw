@@ -1,22 +1,20 @@
-#include "../include/cxl/address_map.h"
-#include "../include/cud/interface.h"
-#include "../include/cud/instruction.h"
-#include "test_config.h"
-#include "utils.h"
+#include "and_or.h"
+#include "cxl/address_map.h"
+#include "cud/interface.h"
+#include "cud/instruction.h"
+#include "../utils.h"
 
 #include <iostream>
 #include <vector>
 
 static void test_and(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
-    std::cout << "\n[AND]\n";
+    std::cout << "\n[Logical: AND]\n";
 
     const size_t N = NUM_COL;
-    std::vector<uint64_t> a(N, cfg.pattern_a);
-    std::vector<uint64_t> b(N, cfg.pattern_b);
-    std::vector<uint64_t> dst_cpu(N), dst_cud(N);
-
-    for (size_t i = 0; i < N; ++i)
-        dst_cpu[i] = a[i] & b[i];
+    const std::vector<uint64_t> a(N, cfg.pattern_a);
+    const std::vector<uint64_t> b(N, cfg.pattern_b);
+    std::vector<uint64_t> dst_cpu(N);
+    for (size_t i = 0; i < N; ++i) dst_cpu[i] = a[i] & b[i];
 
     CudWriteRow(mem, cfg.bank, cfg.row_a,    a);
     CudWriteRow(mem, cfg.bank, cfg.row_b,    b);
@@ -29,10 +27,9 @@ static void test_and(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
 
     const auto insts = CudAnd(a_pa, b_pa, bias_pa, dst_pa);
     if (!CudExecute(io, insts, cfg.inst_base, cfg.status_reg, cfg.done_mask)) {
-        std::cout << "[FAIL] timeout\n";
-        return;
+        std::cout << "[FAIL] timeout\n"; return;
     }
-    dst_cud = CudReadRow(mem, cfg.bank, cfg.row_dst);
+    const auto dst_cud = CudReadRow(mem, cfg.bank, cfg.row_dst);
 
     print_row("[a      ]", a);
     print_row("[b      ]", b);
@@ -43,15 +40,13 @@ static void test_and(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
 }
 
 static void test_or(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
-    std::cout << "\n[OR]\n";
+    std::cout << "\n[Logical: OR]\n";
 
     const size_t N = NUM_COL;
-    std::vector<uint64_t> a(N, cfg.pattern_a);
-    std::vector<uint64_t> b(N, cfg.pattern_b);
-    std::vector<uint64_t> dst_cpu(N), dst_cud(N);
-
-    for (size_t i = 0; i < N; ++i)
-        dst_cpu[i] = a[i] | b[i];
+    const std::vector<uint64_t> a(N, cfg.pattern_a);
+    const std::vector<uint64_t> b(N, cfg.pattern_b);
+    std::vector<uint64_t> dst_cpu(N);
+    for (size_t i = 0; i < N; ++i) dst_cpu[i] = a[i] | b[i];
 
     CudWriteRow(mem, cfg.bank, cfg.row_a,    a);
     CudWriteRow(mem, cfg.bank, cfg.row_b,    b);
@@ -66,10 +61,9 @@ static void test_or(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
 
     const auto insts = CudOr(a_pa, b_pa, bias_pa, zero_pa, dst_pa);
     if (!CudExecute(io, insts, cfg.inst_base, cfg.status_reg, cfg.done_mask)) {
-        std::cout << "[FAIL] timeout\n";
-        return;
+        std::cout << "[FAIL] timeout\n"; return;
     }
-    dst_cud = CudReadRow(mem, cfg.bank, cfg.row_dst);
+    const auto dst_cud = CudReadRow(mem, cfg.bank, cfg.row_dst);
 
     print_row("[a     ]", a);
     print_row("[b     ]", b);
@@ -79,7 +73,7 @@ static void test_or(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     std::cout << (errs == 0 ? "[PASS]" : "[FAIL]") << " OR\n";
 }
 
-void run_cud_library_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
+void run_logical_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     test_and(mem, io, cfg);
     test_or(mem, io, cfg);
 }

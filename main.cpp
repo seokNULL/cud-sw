@@ -1,6 +1,9 @@
 #include "cud/interface.h"
 #include "test/test_config.h"
 #include "test/fault_search.h"
+#include "test/instruction/rowcopy.h"
+#include "test/instruction/maj3.h"
+#include "test/logical/and_or.h"
 
 #include <iostream>
 #include <random>
@@ -10,7 +13,6 @@ void run_cxl_addr_map();
 void run_cxl_io();
 void run_cxl_mem();
 void run_cud_interface_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
-void run_cud_library_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 
 // ── CUD test configuration ────────────────────────────────────────────────────
 // Bank/row assignments and register offsets are fixed here.
@@ -47,11 +49,16 @@ static CudTestConfig make_cud_cfg() {
 // ── CUD sub-menu ──────────────────────────────────────────────────────────────
 
 static void print_cud_menu() {
-    std::cout << "\n  -- CUD API Verification --\n"
+    std::cout << "\n  -- Fault Detection --\n"
               << "  [1]  Fault Row Search\n"
-              << "  [2]  Interface  (DataCopy: Write / Execute / Read)\n"
-              << "  [3]  Library    (AND, OR)\n"
-              << "  [0]  Back\n"
+              << "\n  -- Instruction Level --\n"
+              << "  [2]  ROWCOPY\n"
+              << "  [3]  MAJ3\n"
+              << "\n  -- Logical Level --\n"
+              << "  [4]  AND / OR\n"
+              << "\n  -- Interface --\n"
+              << "  [5]  DataCopy\n"
+              << "\n  [0]  Back\n"
               << "  Select: ";
 }
 
@@ -67,9 +74,13 @@ static void run_cud_tests() {
         switch (choice) {
         case 1: run_fault_search(mem, io); break;
         case 2: { const CudTestConfig cfg = make_cud_cfg();
-                  run_cud_interface_tests(mem, io, cfg); break; }
+                  run_rowcopy_test(mem, io, cfg);      break; }
         case 3: { const CudTestConfig cfg = make_cud_cfg();
-                  run_cud_library_tests(mem, io, cfg);   break; }
+                  run_maj3_test(mem, io, cfg);          break; }
+        case 4: { const CudTestConfig cfg = make_cud_cfg();
+                  run_logical_tests(mem, io, cfg);      break; }
+        case 5: { const CudTestConfig cfg = make_cud_cfg();
+                  run_cud_interface_tests(mem, io, cfg); break; }
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }
