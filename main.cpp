@@ -1,9 +1,7 @@
 #include "cud/interface.h"
 #include "test/test_config.h"
 #include "test/fault_search.h"
-#include "test/instruction/rowcopy.h"
-#include "test/instruction/maj3.h"
-#include "test/logical/and_or.h"
+#include "test/cud_compute.h"
 
 #include <iostream>
 #include <random>
