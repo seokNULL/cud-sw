@@ -10,10 +10,11 @@ static std::vector<CudInst> build_maj3_op(uint64_t a_pa, uint64_t b_pa,
                                            uint64_t bias_pa, uint64_t zero_pa,
                                            uint64_t dst_pa) {
     const uint32_t bank    = decode_physical_addr(a_pa).bank;
-    const uint64_t cmp0    = encode_dram_addr({0, bank, kCmpRow0,    0});
-    const uint64_t cmp1    = encode_dram_addr({0, bank, kCmpRow1,    0});
-    const uint64_t cmp2    = encode_dram_addr({0, bank, kCmpRow2,    0});
-    const uint64_t cmpFrac = encode_dram_addr({0, bank, kCmpRowFrac, 0});
+    const auto     rows    = cmp_group_rows(0);
+    const uint64_t cmp0    = encode_dram_addr({0, bank, rows[0], 0});
+    const uint64_t cmp1    = encode_dram_addr({0, bank, rows[1], 0});
+    const uint64_t cmp2    = encode_dram_addr({0, bank, rows[2], 0});
+    const uint64_t cmpFrac = encode_dram_addr({0, bank, rows[3], 0});
 
     std::vector<CudInst> insts;
 
@@ -32,7 +33,7 @@ static std::vector<CudInst> build_maj3_op(uint64_t a_pa, uint64_t b_pa,
     insts.push_back(cud_make_rowcopy_dst(cmpFrac));
 
     // MAJ3 on cmp0
-    insts.push_back(cud_make_maj3(cmp0, kCmpFracPos, kCmpMode));
+    insts.push_back(cud_make_maj3(cmp0, kCmpFracPos, 0u));
 
     // Copy result (held in frac row after MAJ3) to destination
     insts.push_back(cud_make_rowcopy_src(cmpFrac));
