@@ -47,16 +47,12 @@ static CudTestConfig make_cud_cfg() {
 // ── CUD sub-menu ──────────────────────────────────────────────────────────────
 
 static void print_cud_menu() {
-    std::cout << "\n  -- Fault Detection --\n"
-              << "  [1]  Fault Row Search\n"
-              << "\n  -- Instruction Level --\n"
+    std::cout << "\n  [1]  Fault Row Search\n"
               << "  [2]  ROWCOPY\n"
               << "  [3]  MAJ3\n"
-              << "\n  -- Logical Level --\n"
               << "  [4]  AND / OR\n"
-              << "\n  -- Interface --\n"
               << "  [5]  DataCopy\n"
-              << "\n  [0]  Back\n"
+              << "  [0]  Back\n"
               << "  Select: ";
 }
 
