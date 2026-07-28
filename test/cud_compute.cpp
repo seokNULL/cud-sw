@@ -298,7 +298,7 @@ static void test_mul_width(CxlMem& mem, CxlIo& io,
               << "  b=" << vb
               << "  expect=" << vout << "\n";
 
-    //   la:0, lna:8, lb:16, lnb:24, lout:32  — W≤4 keeps lout within rows 0-100
+    //   la:0, lna:8, lb:16, lnb:24, lout:32  — 2W≤16 keeps lout within rows 0-100
     const BitSerialLayout la   = {bank,  0, W,       NUM_COL};
     const BitSerialLayout lna  = {bank,  8, W,       NUM_COL};
     const BitSerialLayout lb   = {bank, 16, W,       NUM_COL};
@@ -342,6 +342,6 @@ static void test_mul_width(CxlMem& mem, CxlIo& io,
 
 void run_mul_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     std::cout << "\n[Logical: MUL]\n";
-    for (uint8_t W = 1; W <= 4; ++W)
+    for (uint8_t W = 1; W <= 8; ++W)
         test_mul_width(mem, io, cfg.bank, cfg.pattern_a, cfg.pattern_b, W);
 }
