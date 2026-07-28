@@ -42,6 +42,9 @@ struct DramAddress {
 // Convert a row address (within a bank) to its mat ID (0-111).
 uint32_t row_to_mat(uint32_t row);
 
+// Convert a mat ID to the first absolute row address of that mat.
+uint32_t mat_to_row_start(uint32_t mat);
+
 DramAddress decode_physical_addr(uint64_t pa);
 uint64_t encode_dram_addr(const DramAddress& addr);
 void print_dram_address(uint64_t pa, const DramAddress& addr);

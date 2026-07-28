@@ -192,11 +192,12 @@ void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
         CudWriteRow(mem, bank, lout.plane_row(b), 0ULL);
     }
 
-    // Constant rows required by inst_gen
-    CudWriteRow(mem, bank, kZeroRow,  0ULL);
-    CudWriteRow(mem, bank, kOnesRow, ~0ULL);
+    ScratchAllocator scratch(bank, row_to_mat(la.base_row));
 
-    ScratchAllocator scratch(bank);
+    // Constant rows required by inst_gen — written to their absolute addresses
+    CudWriteRow(mem, bank, scratch.abs_row(kZeroRow),  0ULL);
+    CudWriteRow(mem, bank, scratch.abs_row(kOnesRow), ~0ULL);
+
     const auto insts = gen_xor(la, lna, lb, lnb, lout, scratch);
     std::cout << "[inst] count=" << insts.size() << "\n";
 

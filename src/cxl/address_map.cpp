@@ -52,6 +52,12 @@ uint32_t row_to_mat(uint32_t row) {
     return cycle * MAT_PER_CYCLE + mat_in_cyc;
 }
 
+uint32_t mat_to_row_start(uint32_t mat) {
+    const uint32_t cycle      = mat / MAT_PER_CYCLE;
+    const uint32_t mat_in_cyc = mat % MAT_PER_CYCLE;
+    return cycle * MAT_ROWS_PER_CYCLE + kCycleBreaks[mat_in_cyc];
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 DramAddress decode_physical_addr(uint64_t pa) {
