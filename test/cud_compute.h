@@ -10,3 +10,6 @@ void run_maj3_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 
 // Logical-level: AND and OR via the CudAnd / CudOr public API
 void run_logical_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
+
+// Logical-level: XOR via gen_xor (2×AND + OR per bit-plane, CPU pre-computes ~a, ~b)
+void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);

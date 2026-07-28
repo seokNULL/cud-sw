@@ -2,6 +2,9 @@
 #include "cxl/address_map.h"
 #include "cud/instruction.h"
 #include "cud/compute_lib/compute_rows.h"
+#include "cud/compute_lib/data_mapper.h"
+#include "cud/compute_lib/inst_gen.h"
+#include "cud/compute_lib/scratch.h"
 #include "../src/cud/cud_inst_helpers.h"
 #include "utils.h"
 
@@ -152,4 +155,59 @@ static void test_or(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
 void run_logical_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     test_and(mem, io, cfg);
     test_or(mem, io, cfg);
+}
+
+// ── XOR ──────────────────────────────────────────────────────────────────────
+
+void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
+    std::cout << "\n[Logical: XOR]\n";
+
+    constexpr uint32_t W    = 8;
+    const uint32_t     bank = cfg.bank;
+
+    // Use the lower 8 bits of each random pattern as the test value
+    const uint8_t va = static_cast<uint8_t>(cfg.pattern_a);
+    const uint8_t vb = static_cast<uint8_t>(cfg.pattern_b);
+    const uint8_t vx = va ^ vb;
+
+    std::cout << "  a=0x"      << std::hex << static_cast<uint32_t>(va)
+              << "  b=0x"      << static_cast<uint32_t>(vb)
+              << "  expect=0x" << static_cast<uint32_t>(vx) << std::dec << "\n";
+
+    // Bit-serial layouts in the data zone (rows 0-100)
+    const BitSerialLayout la   = {bank,  0, W, NUM_COL};
+    const BitSerialLayout lna  = {bank,  8, W, NUM_COL};
+    const BitSerialLayout lb   = {bank, 16, W, NUM_COL};
+    const BitSerialLayout lnb  = {bank, 24, W, NUM_COL};
+    const BitSerialLayout lout = {bank, 32, W, NUM_COL};
+
+    // Write each bit-plane; CPU computes ~a and ~b
+    for (uint32_t b = 0; b < W; ++b) {
+        const uint64_t aw = ((va >> b) & 1u) ? ~0ULL : 0ULL;
+        const uint64_t bw = ((vb >> b) & 1u) ? ~0ULL : 0ULL;
+        CudWriteRow(mem, bank, la.plane_row(b),   aw);
+        CudWriteRow(mem, bank, lna.plane_row(b), ~aw);
+        CudWriteRow(mem, bank, lb.plane_row(b),   bw);
+        CudWriteRow(mem, bank, lnb.plane_row(b), ~bw);
+        CudWriteRow(mem, bank, lout.plane_row(b), 0ULL);
+    }
+
+    // Constant rows required by inst_gen
+    CudWriteRow(mem, bank, kZeroRow,  0ULL);
+    CudWriteRow(mem, bank, kOnesRow, ~0ULL);
+
+    ScratchAllocator scratch(bank);
+    const auto insts = gen_xor(la, lna, lb, lnb, lout, scratch);
+    std::cout << "[inst] count=" << insts.size() << "\n";
+
+    if (!CudExecute(io, insts)) { std::cout << "[FAIL] timeout\n"; return; }
+
+    size_t total_errs = 0;
+    for (uint32_t b = 0; b < W; ++b) {
+        const uint64_t expect_word = ((vx >> b) & 1u) ? ~0ULL : 0ULL;
+        const std::vector<uint64_t> expect(NUM_COL, expect_word);
+        const auto result = CudReadRow(mem, bank, lout.plane_row(b));
+        total_errs += check_rows(expect, result);
+    }
+    std::cout << (total_errs == 0 ? "[PASS]" : "[FAIL]") << " XOR\n";
 }

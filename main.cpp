@@ -52,6 +52,7 @@ static void print_cud_menu() {
               << "  [3]  MAJ3\n"
               << "  [4]  AND / OR\n"
               << "  [5]  DataCopy\n"
+              << "  [6]  XOR\n"
               << "  [0]  Back\n"
               << "  Select: ";
 }
@@ -75,6 +76,8 @@ static void run_cud_tests() {
                   run_logical_tests(mem, io, cfg);      break; }
         case 5: { const CudTestConfig cfg = make_cud_cfg();
                   run_cud_interface_tests(mem, io, cfg); break; }
+        case 6: { const CudTestConfig cfg = make_cud_cfg();
+                  run_xor_test(mem, io, cfg);            break; }
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }
