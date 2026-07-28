@@ -2,28 +2,29 @@
 #include <cstdint>
 #include <cassert>
 
-// Scratch zone: rows 300-500 (inclusive) within a bank.
+// Row map:
+//   0 - 100   user data: inputs and results
+//   101 - 900 compute zone: MAJ3 groups + scratch temporaries  (this file)
 //
-// All rows in this range fall within Mat 0 (rows 0-1183), so ROWCOPY and MAJ3
-// instructions can freely interoperate with user data rows that also live in
-// Mat 0 (e.g. rows 0-299).
+// All rows 0-900 fall within Mat 0 (boundary at row 1184), so ROWCOPY and
+// MAJ3 instructions can freely operate across the data and compute zones.
 //
-// Layout:
-//   304-313  Mode-0 MAJ3 compute group used by inst_gen.
-//              base=304 (0b100110000): bit0=0, bit3=0 ✓
-//              group rows: {304, 305, 312, 313}
-//   314-500  General-purpose scratch; bump-allocated per operation.
+// Layout within compute zone:
+//   112-121  Mode-0 MAJ3 compute group used by inst_gen.
+//              base=112 (0b1110000): bit0=0, bit3=0 ✓
+//              group rows: {112, 113, 120, 121}
+//   122-900  General-purpose scratch; bump-allocated per operation.
 
-static constexpr uint32_t kScratchBase    = 300u;
-static constexpr uint32_t kScratchEnd     = 501u;  // exclusive
+static constexpr uint32_t kScratchBase    = 101u;
+static constexpr uint32_t kScratchEnd     = 901u;  // exclusive
 
 // Mode-0 compute group base for instruction generators.
-// Satisfies mode-0 constraint: bits 0 and 3 of base are 0.
-//   304 = 0b100110000  →  group {304, 305, 312, 313}
-static constexpr uint32_t kInstGenCmpBase = 304u;
+// Satisfies mode-0 constraint (bits 0 and 3 of base are 0):
+//   112 = 0b1110000  →  group {112, 113, 120, 121}
+static constexpr uint32_t kInstGenCmpBase = 112u;
 
 // First scratch row available for temporaries (after the compute group).
-static constexpr uint32_t kInstGenScratch = 314u;
+static constexpr uint32_t kInstGenScratch = 122u;
 
 // Bump allocator for temporary rows within [kInstGenScratch, kScratchEnd).
 // Reset between operations. Not thread-safe.
