@@ -19,7 +19,8 @@ SRCS = main.cpp \
        src/cud/instruction.cpp \
        src/cud/compute_lib/data_copy.cpp \
        src/cud/compute_lib/logical.cpp \
-       src/cud/compute_lib/data_mapper.cpp
+       src/cud/compute_lib/data_mapper.cpp \
+       src/cud/compute_lib/inst_gen.cpp
 
 OBJS   = $(SRCS:%.cpp=$(BUILDDIR)/%.o)
 TARGET = cud-cxl-run
