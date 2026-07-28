@@ -30,13 +30,19 @@ static constexpr std::array<CmpModeDesc, 7> kCmpModes = {{
 
 static constexpr uint32_t kCmpFracPos = 3u;
 
-// Returns the 4 row addresses for the given mode in position order [0..3].
-inline std::array<uint32_t, 4> cmp_group_rows(uint32_t mode) {
+// Returns the 4 row addresses for the given mode using an explicit base row.
+// base must have both dc0 and dc1 bits equal to 0.
+inline std::array<uint32_t, 4> cmp_group_rows(uint32_t mode, uint32_t base) {
     const auto& m = kCmpModes[mode];
     return {{
-        m.base,
-        m.base | (1u << m.dc0),
-        m.base | (1u << m.dc1),
-        m.base | (1u << m.dc0) | (1u << m.dc1),
+        base,
+        base | (1u << m.dc0),
+        base | (1u << m.dc1),
+        base | (1u << m.dc0) | (1u << m.dc1),
     }};
+}
+
+// Returns the 4 row addresses for the given mode using the default base from kCmpModes.
+inline std::array<uint32_t, 4> cmp_group_rows(uint32_t mode) {
+    return cmp_group_rows(mode, kCmpModes[mode].base);
 }
