@@ -35,11 +35,12 @@ std::vector<CudInst> gen_xor(
 
 // ADD: out[k] = bit k of (a + b)  for k in [0, W]  (W+1 output bit-planes)
 //
-// Algorithm: Ripple Carry Adder.  W in [1..8].
-//   carry via MAJ3 directly (11 insts/bit); sum via XOR3 (99 insts/bit).
-//   Total: 55 + (W-1)*121 + 3 instructions.
+// Algorithm: Ripple Carry Adder with fan-out pre-load.  W in [1..8].
+//   Uses 11 fixed mode-0 compute groups at mat offsets [112, 288).
+//   Half adder (bit 0): 39 insts.  Full adder (bit i≥1): 77 insts each.
+//   Total: 39 + (W-1)*77 + 3  (W=1: 42  W=4: 273  W=8: 581)
 // CPU must pre-compute not_a and not_b and write all four to DRAM.
-// Uses 5 scratch rows reused across all output bits.
+// Uses 2 scratch rows (carry, ~carry) reused across all output bits.
 // out.bit_width must equal W+1.
 std::vector<CudInst> gen_add(
     const BitSerialLayout& a,

@@ -8,10 +8,12 @@
 //   101 - 900 compute zone: MAJ3 groups + scratch temporaries  (this file)
 //
 // Within compute zone:
-//   112-121  Mode-0 MAJ3 compute group used by inst_gen.
-//              base=112 (0b1110000): bit0=0, bit3=0 ✓
-//              group rows: {base+0, base+1, base+8, base+9}
+//   112-287  11 mode-0 MAJ3 compute groups used by gen_add (fan-out pipeline).
+//              Group g at base = 112 + g*16 for g = 0..10.
+//              Member offsets within each group: {+0, +1, +8, +9}.
+//              base=112 (0b01110000): bit0=0, bit3=0 ✓; stride 16 preserves this.
 //   122-900  General-purpose scratch; bump-allocated per operation.
+//              gen_xor allocates from 122; gen_add advances allocator to 288.
 //
 // mat_to_row_start(mat) is always a multiple of 1184, so its low bits are 0.
 // Adding offset 112 (= 0b01110000) keeps bit0=0 and bit3=0, satisfying mode-0.
@@ -26,7 +28,8 @@ static constexpr uint32_t kOnesRow        = 102u;  // all bits = 1
 // Mode-0 MAJ3 compute group base offset for instruction generators.
 static constexpr uint32_t kInstGenCmpBase = 112u;
 
-// General scratch starts here (offset 122, after compute group rows 112-121).
+// General scratch starts here (offset 122, after the first compute group at 112-121).
+// gen_add advances scratch.next to 288 to skip the full 11-group area.
 static constexpr uint32_t kInstGenScratch = 122u;
 
 // Bump allocator for temporary rows within a mat's compute zone.
