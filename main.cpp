@@ -53,7 +53,7 @@ static void print_cud_menu() {
               << "  [4]  AND / OR\n"
               << "  [5]  DataCopy\n"
               << "  [6]  XOR\n"
-              << "  [7]  ADD (1-4 bit)\n"
+              << "  [7]  ADD (1-8 bit)\n"
               << "  [0]  Back\n"
               << "  Select: ";
 }

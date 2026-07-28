@@ -95,7 +95,7 @@ std::vector<CudInst> gen_add(
     uint8_t W,
     ScratchAllocator& scratch)
 {
-    assert(W >= 1 && W <= 4);
+    assert(W >= 1 && W <= 8);
     assert(a.bit_width == W && b.bit_width == W && out.bit_width == W + 1u);
     assert(a.bank == b.bank && a.bank == out.bank);
 

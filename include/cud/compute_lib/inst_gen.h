@@ -36,7 +36,7 @@ std::vector<CudInst> gen_xor(
 
 // ADD: out[k] = bit k of (a + b)  for k in [0, W]  (W+1 output bit-planes)
 //
-// Algorithm: two-level SOP from kAdderSop[W-1].  W in [1..4].
+// Algorithm: two-level SOP from kAdderSop[W-1].  W in [1..8].
 // CPU must pre-compute not_a and not_b and write all four to DRAM.
 // Uses 2 scratch rows (acc + tmp) reused across all output bits.
 // out.bit_width must equal W+1.

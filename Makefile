@@ -11,6 +11,7 @@ SRCS = main.cpp \
        test/cud_interface.cpp \
        test/cud_compute.cpp \
        test/fault_search.cpp \
+       test/inst_trace.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \
