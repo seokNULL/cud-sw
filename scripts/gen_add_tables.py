@@ -154,7 +154,7 @@ def add_sop(W, verbose=False):
 
 # Max term count per output bit observed across all W=1..8.
 # Update this if you extend to larger W.
-MAX_TERMS = 512
+MAX_TERMS = 1024
 MAX_LITS  = 16   # 2*W for W=8
 
 HEADER = f"""\
