@@ -2,7 +2,6 @@
 #include "cud/instruction.h"
 #include "cud/compute_lib/data_mapper.h"
 #include "cud/compute_lib/scratch.h"
-#include "cud/compute_lib/add_table.h"
 #include <cstdint>
 #include <vector>
 
@@ -36,9 +35,11 @@ std::vector<CudInst> gen_xor(
 
 // ADD: out[k] = bit k of (a + b)  for k in [0, W]  (W+1 output bit-planes)
 //
-// Algorithm: two-level SOP from kAdderSop[W-1].  W in [1..8].
+// Algorithm: Ripple Carry Adder.  W in [1..8].
+//   carry via MAJ3 directly (11 insts/bit); sum via XOR3 (99 insts/bit).
+//   Total: 55 + (W-1)*121 + 3 instructions.
 // CPU must pre-compute not_a and not_b and write all four to DRAM.
-// Uses 2 scratch rows (acc + tmp) reused across all output bits.
+// Uses 5 scratch rows reused across all output bits.
 // out.bit_width must equal W+1.
 std::vector<CudInst> gen_add(
     const BitSerialLayout& a,
