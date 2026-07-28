@@ -45,20 +45,24 @@ static const char* opcode_name(uint32_t op) {
     }
 }
 
-// ── Printer ───────────────────────────────────────────────────────────────────
+// ── File writer ───────────────────────────────────────────────────────────────
 
-void print_inst_trace(const std::vector<CudInst>& insts,
-                      const char* label,
-                      TraceOptions opts)
+void dump_inst_trace(const std::vector<CudInst>& insts,
+                     const char* path,
+                     const char* label,
+                     TraceOptions opts)
 {
+    FILE* f = fopen(path, "w");
+    if (!f) {
+        printf("  [trace] WARNING: could not open '%s' for writing\n", path);
+        return;
+    }
+
     if (label)
-        printf("── inst trace: %s (%zu insts) ──────────────────────────────\n",
-               label, insts.size());
+        fprintf(f, "── inst trace: %s (%zu insts) ──────────────────────────────\n",
+                label, insts.size());
 
-    // Per-opcode counters for summary
     uint32_t cnt_copy = 0, cnt_maj3 = 0, cnt_end = 0, cnt_other = 0;
-
-    // For consecutive-duplicate detection
     uint32_t prev_src_bank = UINT32_MAX, prev_src_row = UINT32_MAX;
 
     size_t i = 0;
@@ -73,13 +77,13 @@ void print_inst_trace(const std::vector<CudInst>& insts,
                 bool dupe = opts.show_dupes &&
                             d.bank == prev_src_bank && d.row == prev_src_row;
                 if (opts.show_hex)
-                    printf("[%04zu]  %08X %08X  ", i, raw, insts[i + 1]);
+                    fprintf(f, "[%04zu]  %08X %08X  ", i, raw, insts[i + 1]);
                 else
-                    printf("[%04zu]  ", i);
-                printf("COPY  bk%u:r%-6u  ←  bk%u:r%u",
-                       d2.bank, d2.row, d.bank, d.row);
-                if (dupe) printf("  *** dup src");
-                printf("\n");
+                    fprintf(f, "[%04zu]  ", i);
+                fprintf(f, "COPY  bk%u:r%-6u  ←  bk%u:r%u",
+                        d2.bank, d2.row, d.bank, d.row);
+                if (dupe) fprintf(f, "  *** dup src");
+                fprintf(f, "\n");
                 prev_src_bank = d.bank;
                 prev_src_row  = d.row;
                 ++cnt_copy;
@@ -88,33 +92,33 @@ void print_inst_trace(const std::vector<CudInst>& insts,
             }
         }
 
-        // All other instructions printed individually
+        // All other instructions written individually
         if (opts.show_hex)
-            printf("[%04zu]  %08X            ", i, raw);
+            fprintf(f, "[%04zu]  %08X            ", i, raw);
         else
-            printf("[%04zu]  ", i);
+            fprintf(f, "[%04zu]  ", i);
 
         switch (d.opcode) {
         case CUD_OP_END:
-            printf("END\n");
+            fprintf(f, "END\n");
             ++cnt_end;
             break;
         case CUD_OP_MAJ3:
-            printf("MAJ3  bk%u:r%u  frac=%u mode=%u\n",
-                   d.bank, d.row, d.frac, d.mode);
+            fprintf(f, "MAJ3  bk%u:r%u  frac=%u mode=%u\n",
+                    d.bank, d.row, d.frac, d.mode);
             ++cnt_maj3;
             break;
         case CUD_OP_ROWCOPY_SRC:
-            printf("ROWCOPY_SRC  bk%u:r%u  (unpaired)\n", d.bank, d.row);
+            fprintf(f, "ROWCOPY_SRC  bk%u:r%u  (unpaired)\n", d.bank, d.row);
             ++cnt_other;
             break;
         case CUD_OP_ROWCOPY_DST:
-            printf("ROWCOPY_DST  bk%u:r%u  last=%d  (unpaired)\n",
-                   d.bank, d.row, d.last);
+            fprintf(f, "ROWCOPY_DST  bk%u:r%u  last=%d  (unpaired)\n",
+                    d.bank, d.row, d.last);
             ++cnt_other;
             break;
         default:
-            printf("%-12s  bk%u:r%u\n", opcode_name(d.opcode), d.bank, d.row);
+            fprintf(f, "%-12s  bk%u:r%u\n", opcode_name(d.opcode), d.bank, d.row);
             ++cnt_other;
             break;
         }
@@ -125,15 +129,17 @@ void print_inst_trace(const std::vector<CudInst>& insts,
 
     if (opts.show_summary) {
         const size_t total = insts.size();
-        printf("── summary: %zu insts  COPY×%u  MAJ3×%u  END×%u",
-               total, cnt_copy, cnt_maj3, cnt_end);
-        if (cnt_other) printf("  other×%u", cnt_other);
-        // ROWCOPY pairs account for 2 instructions each
+        fprintf(f, "── summary: %zu insts  COPY×%u  MAJ3×%u  END×%u",
+                total, cnt_copy, cnt_maj3, cnt_end);
+        if (cnt_other) fprintf(f, "  other×%u", cnt_other);
         const uint32_t rowcopy_insts = cnt_copy * 2;
         if (total > 0)
-            printf("  (COPY%.0f%%  MAJ3%.0f%%)",
-                   100.0 * rowcopy_insts / total,
-                   100.0 * cnt_maj3 / total);
-        printf("\n");
+            fprintf(f, "  (COPY%.0f%%  MAJ3%.0f%%)",
+                    100.0 * rowcopy_insts / total,
+                    100.0 * cnt_maj3 / total);
+        fprintf(f, "\n");
     }
+
+    fclose(f);
+    printf("  [trace] written to %s\n", path);
 }

@@ -203,7 +203,7 @@ void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
 
     const auto insts = gen_xor(la, lna, lb, lnb, lout, scratch);
     std::cout << "[inst] count=" << insts.size() << "\n";
-    print_inst_trace(insts, "XOR");
+    dump_inst_trace(insts, "trace_xor.txt", "XOR");
 
     if (!CudExecute(io, insts)) { std::cout << "[FAIL] timeout\n"; return; }
 
@@ -260,9 +260,10 @@ static void test_add_width(CxlMem& mem, CxlIo& io,
 
     const auto insts = gen_add(la, lna, lb, lnb, lout, W, scratch);
     std::cout << "[inst] count=" << insts.size() << "\n";
-    char trace_label[32];
+    char trace_path[64], trace_label[32];
+    std::snprintf(trace_path,  sizeof(trace_path),  "trace_add_%dbit.txt", static_cast<int>(W));
     std::snprintf(trace_label, sizeof(trace_label), "ADD %d-bit", static_cast<int>(W));
-    print_inst_trace(insts, trace_label);
+    dump_inst_trace(insts, trace_path, trace_label);
 
     if (!CudExecute(io, insts)) { std::cout << "[FAIL] timeout\n"; return; }
 
