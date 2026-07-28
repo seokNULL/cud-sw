@@ -21,9 +21,3 @@ struct BitSerialLayout {
     uint64_t plane_pa(uint32_t bit, uint32_t col = 0) const;
 };
 
-// True if all bit-planes of l are within the same mat.
-bool layout_valid(const BitSerialLayout& l);
-
-// True if a and b share the same bank and all their rows lie in the same mat.
-// This is required for any ROWCOPY or MAJ3 that touches rows from both layouts.
-bool layouts_compatible(const BitSerialLayout& a, const BitSerialLayout& b);

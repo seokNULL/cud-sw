@@ -14,5 +14,5 @@ void run_logical_tests(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 // Logical-level: XOR via gen_xor (2×AND + OR per bit-plane, CPU pre-computes ~a, ~b)
 void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 
-// Logical-level: W-bit addition via gen_add (SOP table, W=1..4)
+// Logical-level: W-bit addition via gen_add (Ripple Carry Adder, W=1..8)
 void run_add_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);

@@ -54,26 +54,6 @@ static void gen_or(std::vector<CudInst>& v,
     v.push_back(cud_make_rowcopy_src(cf));    v.push_back(cud_make_rowcopy_dst(dp));
 }
 
-// dst_row = MAJ3(x_pa, y_pa, z_pa)
-static void gen_maj3(std::vector<CudInst>& v,
-                     uint64_t x_pa, uint64_t y_pa, uint64_t z_pa,
-                     const ScratchAllocator& sc, uint32_t dst_row) {
-    const auto   cmp  = cmp_group_rows(0, kInstGenCmpBase);
-    const uint64_t c0 = encode_dram_addr({0, sc.bank, sc.abs_row(cmp[0]), 0});
-    const uint64_t c1 = encode_dram_addr({0, sc.bank, sc.abs_row(cmp[1]), 0});
-    const uint64_t c2 = encode_dram_addr({0, sc.bank, sc.abs_row(cmp[2]), 0});
-    const uint64_t cf = encode_dram_addr({0, sc.bank, sc.abs_row(cmp[3]), 0});
-    const uint64_t zp = encode_dram_addr({0, sc.bank, sc.abs_row(kZeroRow), 0});
-    const uint64_t dp = encode_dram_addr({0, sc.bank, dst_row, 0});
-
-    v.push_back(cud_make_rowcopy_src(x_pa));  v.push_back(cud_make_rowcopy_dst(c0));
-    v.push_back(cud_make_rowcopy_src(y_pa));  v.push_back(cud_make_rowcopy_dst(c1));
-    v.push_back(cud_make_rowcopy_src(z_pa));  v.push_back(cud_make_rowcopy_dst(c2));
-    v.push_back(cud_make_rowcopy_src(zp));    v.push_back(cud_make_rowcopy_dst(cf));
-    v.push_back(cud_make_maj3(c0, kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(cf));    v.push_back(cud_make_rowcopy_dst(dp));
-}
-
 // ── Public generators ─────────────────────────────────────────────────────────
 
 std::vector<CudInst> gen_xor(

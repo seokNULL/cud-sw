@@ -5,7 +5,6 @@
 #include "cud/compute_lib/data_mapper.h"
 #include "cud/compute_lib/inst_gen.h"
 #include "cud/compute_lib/scratch.h"
-#include "cud/compute_lib/add_table.h"
 #include "../src/cud/cud_inst_helpers.h"
 #include "inst_trace.h"
 #include "utils.h"
