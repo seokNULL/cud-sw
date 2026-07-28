@@ -229,9 +229,9 @@ static void test_add_width(CxlMem& mem, CxlIo& io,
     const uint32_t vout = (va + vb) & ((1u << (W + 1)) - 1u);  // W+1 result bits
 
     std::cout << "\n[ADD " << static_cast<int>(W) << "-bit]"
-              << "  a=0x" << std::hex << va
-              << "  b=0x" << vb
-              << "  expect=0x" << vout << std::dec << "\n";
+              << "  a=" << va
+              << "  b=" << vb
+              << "  expect=" << vout << "\n";
 
     // Bit-serial layouts in user data zone (rows 0-100)
     //   la:0, lna:8, lb:16, lnb:24, lout:32  — fits W<=8 (max row 40 for lout)
