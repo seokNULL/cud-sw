@@ -51,3 +51,22 @@ std::vector<CudInst> gen_add(
     const BitSerialLayout& out,
     uint8_t W,
     ScratchAllocator& scratch);
+
+// MUL: out[k] = bit k of (a * b)  for k in [0, 2W)  (2W output bit-planes)
+//
+// Algorithm: Wallace tree (greedy left-to-right column reduction) + final CPA.
+//   Partial products: W² AND gates, each 22 insts.
+//   Reduction FAs: 6-group FA producing (sum, ~sum, carry, ~carry), 47 insts each.
+//   Final CPA: 2W × 6-group FA, 47 insts per bit.
+//   Instruction count: W²×22 + (Wallace FAs)×47 + 2W×47 + 2W×2 + 1
+//   Approx: W=4: ~1700 insts   W=8: ~6100 insts
+// CPU must pre-compute not_a and not_b and write all four to DRAM.
+// out.bit_width must equal 2*W.
+std::vector<CudInst> gen_mul(
+    const BitSerialLayout& a,
+    const BitSerialLayout& not_a,
+    const BitSerialLayout& b,
+    const BitSerialLayout& not_b,
+    const BitSerialLayout& out,
+    uint8_t W,
+    ScratchAllocator& scratch);

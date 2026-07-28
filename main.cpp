@@ -54,6 +54,7 @@ static void print_cud_menu() {
               << "  [5]  DataCopy\n"
               << "  [6]  XOR\n"
               << "  [7]  ADD (1-8 bit)\n"
+              << "  [8]  MUL (1-4 bit)\n"
               << "  [0]  Back\n"
               << "  Select: ";
 }
@@ -81,6 +82,8 @@ static void run_cud_tests() {
                   run_xor_test(mem, io, cfg);            break; }
         case 7: { const CudTestConfig cfg = make_cud_cfg();
                   run_add_test(mem, io, cfg);            break; }
+        case 8: { const CudTestConfig cfg = make_cud_cfg();
+                  run_mul_test(mem, io, cfg);            break; }
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }

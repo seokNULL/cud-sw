@@ -16,3 +16,6 @@ void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
 
 // Logical-level: W-bit addition via gen_add (Ripple Carry Adder, W=1..8)
 void run_add_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);
+
+// Logical-level: W-bit multiplication via gen_mul (Wallace tree, W=1..4)
+void run_mul_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg);

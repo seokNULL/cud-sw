@@ -282,3 +282,66 @@ void run_add_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
     for (uint8_t W = 1; W <= 8; ++W)
         test_add_width(mem, io, cfg.bank, cfg.pattern_a, cfg.pattern_b, W);
 }
+
+// ── MUL ───────────────────────────────────────────────────────────────────────
+
+static void test_mul_width(CxlMem& mem, CxlIo& io,
+                            uint32_t bank, uint64_t pattern_a, uint64_t pattern_b,
+                            uint8_t W) {
+    const uint32_t mask = (1u << W) - 1u;
+    const uint32_t va   = static_cast<uint32_t>(pattern_a & mask);
+    const uint32_t vb   = static_cast<uint32_t>(pattern_b & mask);
+    const uint32_t vout = va * vb;
+
+    std::cout << "\n[MUL " << static_cast<int>(W) << "-bit]"
+              << "  a=" << va
+              << "  b=" << vb
+              << "  expect=" << vout << "\n";
+
+    //   la:0, lna:8, lb:16, lnb:24, lout:32  — W≤4 keeps lout within rows 0-100
+    const BitSerialLayout la   = {bank,  0, W,       NUM_COL};
+    const BitSerialLayout lna  = {bank,  8, W,       NUM_COL};
+    const BitSerialLayout lb   = {bank, 16, W,       NUM_COL};
+    const BitSerialLayout lnb  = {bank, 24, W,       NUM_COL};
+    const BitSerialLayout lout = {bank, 32, 2u * W,  NUM_COL};
+
+    for (uint32_t bit = 0; bit < W; ++bit) {
+        const uint64_t aw = ((va >> bit) & 1u) ? ~0ULL : 0ULL;
+        const uint64_t bw = ((vb >> bit) & 1u) ? ~0ULL : 0ULL;
+        CudWriteRow(mem, bank, la.plane_row(bit),   aw);
+        CudWriteRow(mem, bank, lna.plane_row(bit), ~aw);
+        CudWriteRow(mem, bank, lb.plane_row(bit),   bw);
+        CudWriteRow(mem, bank, lnb.plane_row(bit), ~bw);
+    }
+    for (uint32_t bit = 0; bit < 2u * W; ++bit)
+        CudWriteRow(mem, bank, lout.plane_row(bit), 0ULL);
+
+    ScratchAllocator scratch(bank, row_to_mat(la.base_row));
+    CudWriteRow(mem, bank, scratch.abs_row(kZeroRow),  0ULL);
+    CudWriteRow(mem, bank, scratch.abs_row(kOnesRow), ~0ULL);
+
+    const auto insts = gen_mul(la, lna, lb, lnb, lout, W, scratch);
+    std::cout << "[inst] count=" << insts.size() << "\n";
+    char trace_path[64], trace_label[32];
+    std::snprintf(trace_path,  sizeof(trace_path),  "trace_mul_%dbit.txt", static_cast<int>(W));
+    std::snprintf(trace_label, sizeof(trace_label), "MUL %d-bit", static_cast<int>(W));
+    dump_inst_trace(insts, trace_path, trace_label);
+
+    if (!CudExecute(io, insts)) { std::cout << "[FAIL] timeout\n"; return; }
+
+    size_t total_errs = 0;
+    for (uint32_t bit = 0; bit < 2u * W; ++bit) {
+        const uint64_t expect_word = ((vout >> bit) & 1u) ? ~0ULL : 0ULL;
+        const std::vector<uint64_t> expect(NUM_COL, expect_word);
+        const auto result = CudReadRow(mem, bank, lout.plane_row(bit));
+        total_errs += check_rows(expect, result);
+    }
+    std::cout << (total_errs == 0 ? "[PASS]" : "[FAIL]")
+              << " MUL " << static_cast<int>(W) << "-bit\n";
+}
+
+void run_mul_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
+    std::cout << "\n[Logical: MUL]\n";
+    for (uint8_t W = 1; W <= 4; ++W)
+        test_mul_width(mem, io, cfg.bank, cfg.pattern_a, cfg.pattern_b, W);
+}
