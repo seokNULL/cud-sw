@@ -5,6 +5,7 @@
 #include "cud/compute_lib/data_mapper.h"
 #include "cud/compute_lib/inst_gen.h"
 #include "cud/compute_lib/scratch.h"
+#include "cud/compute_lib/add_table.h"
 #include "../src/cud/cud_inst_helpers.h"
 #include "utils.h"
 
@@ -211,4 +212,67 @@ void run_xor_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
         total_errs += check_rows(expect, result);
     }
     std::cout << (total_errs == 0 ? "[PASS]" : "[FAIL]") << " XOR\n";
+}
+
+// ── ADD ───────────────────────────────────────────────────────────────────────
+
+static void test_add_width(CxlMem& mem, CxlIo& io,
+                            uint32_t bank, uint64_t pattern_a, uint64_t pattern_b,
+                            uint8_t W) {
+    // Extract W-bit values (one per column: broadcast same value across all columns)
+    const uint32_t mask = (1u << W) - 1u;
+    const uint8_t  va   = static_cast<uint8_t>(pattern_a & mask);
+    const uint8_t  vb   = static_cast<uint8_t>(pattern_b & mask);
+    const uint8_t  vout = static_cast<uint8_t>((va + vb) & ((1u << (W + 1)) - 1u));
+
+    std::cout << "\n[ADD " << static_cast<int>(W) << "-bit]"
+              << "  a=0x" << std::hex << static_cast<uint32_t>(va)
+              << "  b=0x" << static_cast<uint32_t>(vb)
+              << "  expect=0x" << static_cast<uint32_t>(vout) << std::dec << "\n";
+
+    // Bit-serial layouts in user data zone (rows 0-100)
+    //   la:0, lna:8, lb:16, lnb:24, lout:32  — fits W<=4 with room to spare
+    const BitSerialLayout la   = {bank,  0, W,     NUM_COL};
+    const BitSerialLayout lna  = {bank,  8, W,     NUM_COL};
+    const BitSerialLayout lb   = {bank, 16, W,     NUM_COL};
+    const BitSerialLayout lnb  = {bank, 24, W,     NUM_COL};
+    const BitSerialLayout lout = {bank, 32, W + 1u, NUM_COL};
+
+    // Write bit-planes; CPU computes ~a and ~b
+    for (uint8_t bit = 0; bit < W; ++bit) {
+        const uint64_t aw = ((va >> bit) & 1u) ? ~0ULL : 0ULL;
+        const uint64_t bw = ((vb >> bit) & 1u) ? ~0ULL : 0ULL;
+        CudWriteRow(mem, bank, la.plane_row(bit),   aw);
+        CudWriteRow(mem, bank, lna.plane_row(bit), ~aw);
+        CudWriteRow(mem, bank, lb.plane_row(bit),   bw);
+        CudWriteRow(mem, bank, lnb.plane_row(bit), ~bw);
+    }
+    // Zero-init output rows
+    for (uint8_t bit = 0; bit <= W; ++bit)
+        CudWriteRow(mem, bank, lout.plane_row(bit), 0ULL);
+
+    ScratchAllocator scratch(bank, row_to_mat(la.base_row));
+    CudWriteRow(mem, bank, scratch.abs_row(kZeroRow),  0ULL);
+    CudWriteRow(mem, bank, scratch.abs_row(kOnesRow), ~0ULL);
+
+    const auto insts = gen_add(la, lna, lb, lnb, lout, W, scratch);
+    std::cout << "[inst] count=" << insts.size() << "\n";
+
+    if (!CudExecute(io, insts)) { std::cout << "[FAIL] timeout\n"; return; }
+
+    size_t total_errs = 0;
+    for (uint8_t bit = 0; bit <= W; ++bit) {
+        const uint64_t expect_word = ((vout >> bit) & 1u) ? ~0ULL : 0ULL;
+        const std::vector<uint64_t> expect(NUM_COL, expect_word);
+        const auto result = CudReadRow(mem, bank, lout.plane_row(bit));
+        total_errs += check_rows(expect, result);
+    }
+    std::cout << (total_errs == 0 ? "[PASS]" : "[FAIL]")
+              << " ADD " << static_cast<int>(W) << "-bit\n";
+}
+
+void run_add_test(CxlMem& mem, CxlIo& io, const CudTestConfig& cfg) {
+    std::cout << "\n[Logical: ADD]\n";
+    for (uint8_t W = 1; W <= 4; ++W)
+        test_add_width(mem, io, cfg.bank, cfg.pattern_a, cfg.pattern_b, W);
 }

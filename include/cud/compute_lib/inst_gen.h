@@ -2,6 +2,8 @@
 #include "cud/instruction.h"
 #include "cud/compute_lib/data_mapper.h"
 #include "cud/compute_lib/scratch.h"
+#include "cud/compute_lib/add_table.h"
+#include <cstdint>
 #include <vector>
 
 // ── Bit-serial instruction generators ────────────────────────────────────────
@@ -30,4 +32,19 @@ std::vector<CudInst> gen_xor(
     const BitSerialLayout& b,
     const BitSerialLayout& not_b,
     const BitSerialLayout& out,
+    ScratchAllocator& scratch);
+
+// ADD: out[k] = bit k of (a + b)  for k in [0, W]  (W+1 output bit-planes)
+//
+// Algorithm: two-level SOP from kAdderSop[W-1].  W in [1..4].
+// CPU must pre-compute not_a and not_b and write all four to DRAM.
+// Uses 2 scratch rows (acc + tmp) reused across all output bits.
+// out.bit_width must equal W+1.
+std::vector<CudInst> gen_add(
+    const BitSerialLayout& a,
+    const BitSerialLayout& not_a,
+    const BitSerialLayout& b,
+    const BitSerialLayout& not_b,
+    const BitSerialLayout& out,
+    uint8_t W,
     ScratchAllocator& scratch);
