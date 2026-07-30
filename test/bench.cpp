@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <ctime>
+#include <emmintrin.h>   // _mm_stream_si64, _mm_sfence, _mm_clflush, _mm_mfence
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -64,31 +65,83 @@ static double us_since(const Clock::time_point& t0) {
     return std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
 }
 
-// ── Bit-serial packing / unpacking ───────────────────────────────────────────
+// ── Fast CXL.mem access (bank=0 only) ────────────────────────────────────────
+//
+// PA layout (bank=0):
+//   PA[5:3]  = col[2:0]   (low 3 col bits → 8-byte stride within a cache line)
+//   PA[9:6]  = bank       (0 for benchmark)
+//   PA[16:10]= col[9:3]   (upper 7 col bits → 1024-byte stride between groups)
+//   PA[33:17]= row
+//
+// Columns 0-7 share one 64-byte cache line, columns 8-15 the next (1024B away), etc.
+// 128 cache lines per row, each 1024 bytes apart.
 
-// Pack first N_ELEM elements of data into W bit-plane rows on CXL.mem.
-// Element i, bit k → bit (i%64) of column (i/64) in row (base + k).
-static void pack_write(CxlMem& mem, uint32_t bank, uint32_t base,
+static inline uint64_t col_pa_off(uint32_t col) {
+    return ((uint64_t)(col >> 3) << 10) | ((uint64_t)(col & 7) << 3);
+}
+static inline uint64_t row_pa(uint32_t row) { return (uint64_t)row << 17; }
+
+// NT-store one uint64_t word to (bank=0, row, col) — no clflush needed.
+static inline void nt_store(void* base, uint32_t row, uint32_t col, uint64_t word) {
+    auto* ptr = reinterpret_cast<long long*>(
+        static_cast<char*>(base) + row_pa(row) + col_pa_off(col));
+    _mm_stream_si64(ptr, static_cast<long long>(word));
+}
+
+// Invalidate one cache-line group g of (bank=0, row) before a CPU read.
+static inline void clflush_group(void* base, uint32_t row, uint32_t g) {
+    _mm_clflush(static_cast<char*>(base) + row_pa(row) + ((uint64_t)g << 10));
+}
+
+// Read one uint64_t from (bank=0, row, col) — caller must have flushed first.
+static inline uint64_t read_col(const void* base, uint32_t row, uint32_t col) {
+    return *reinterpret_cast<const volatile uint64_t*>(
+        static_cast<const char*>(base) + row_pa(row) + col_pa_off(col));
+}
+
+// ── Bit-serial packing / unpacking ───────────────────────────────────────────
+//
+// Optimizations vs. CudWriteRow path:
+//   • No PA vector allocation per row (computed inline).
+//   • NT stores bypass cache → no clflush needed after write.
+//   • Packing loop parallelised over columns (no write-races between threads).
+
+// Pack first N_ELEM elements of data into W bit-plane rows via NT stores.
+static void pack_write(void* mem_base, uint32_t base_row,
                         uint8_t W, const std::vector<uint8_t>& data) {
-    std::vector<uint64_t> row(NUM_COL);
     for (uint32_t k = 0; k < W; ++k) {
-        std::fill(row.begin(), row.end(), 0ULL);
-        for (size_t i = 0; i < N_ELEM; ++i)
-            if ((data[i] >> k) & 1u)
-                row[i >> 6] |= 1ULL << (i & 63u);
-        CudWriteRow(mem, bank, base + k, row);
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+        for (int col = 0; col < NUM_COL; ++col) {
+            const uint8_t* d = data.data() + (size_t)col * 64;
+            uint64_t word = 0;
+            for (int b = 0; b < 64; ++b)
+                if ((d[b] >> k) & 1u)
+                    word |= 1ULL << b;
+            nt_store(mem_base, base_row + k, (uint32_t)col, word);
+        }
+        _mm_sfence();   // ensure all NT stores for this bit-plane are visible
     }
 }
 
-// Unpack W_out bit-plane rows from CXL.mem into N_ELEM uint32_t values.
-static std::vector<uint32_t> read_unpack(CxlMem& mem, uint32_t bank,
-                                          uint32_t base, uint8_t W_out) {
+// Batch-flush all cache lines of W_out rows, then unpack into uint32_t values.
+static std::vector<uint32_t> read_unpack(void* mem_base, uint32_t base_row,
+                                          uint8_t W_out) {
+    // Flush all rows at once before reading (one mfence for the entire batch)
+    for (uint32_t k = 0; k < W_out; ++k)
+        for (uint32_t g = 0; g < NUM_COL / 8; ++g)
+            clflush_group(mem_base, base_row + k, g);
+    _mm_mfence();
+
     std::vector<uint32_t> out(N_ELEM, 0u);
     for (uint32_t k = 0; k < W_out; ++k) {
-        auto row = CudReadRow(mem, bank, base + k);
-        for (size_t i = 0; i < N_ELEM; ++i)
-            if ((row[i >> 6] >> (i & 63u)) & 1u)
-                out[i] |= (1u << k);
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+        for (int col = 0; col < NUM_COL; ++col) {
+            const uint64_t word = read_col(mem_base, base_row + k, (uint32_t)col);
+            uint32_t* op = out.data() + (size_t)col * 64;
+            for (int b = 0; b < 64; ++b)
+                if ((word >> b) & 1u)
+                    op[b] |= (1u << k);
+        }
     }
     return out;
 }
@@ -194,10 +247,10 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
 
     // CXL.mem write (includes bit-serial format conversion)
     auto t_write = Clock::now();
-    pack_write(mem, kBenchBank, kBaseA,  W, am);
-    pack_write(mem, kBenchBank, kBaseNA, W, na);
-    pack_write(mem, kBenchBank, kBaseB,  W, bm);
-    pack_write(mem, kBenchBank, kBaseNB, W, nb);
+    pack_write(mem.base(), kBaseA,  W, am);
+    pack_write(mem.base(), kBaseNA, W, na);
+    pack_write(mem.base(), kBaseB,  W, bm);
+    pack_write(mem.base(), kBaseNB, W, nb);
     const double write_us = us_since(t_write);
 
     // Instruction generation
@@ -228,7 +281,7 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
 
     // CXL.mem read (includes bit-serial→packed conversion)
     auto t_read = Clock::now();
-    const auto cud_out = read_unpack(mem, kBenchBank, kBaseOut, W_out);
+    const auto cud_out = read_unpack(mem.base(), kBaseOut, W_out);
     const double read_us = us_since(t_read);
 
     const double cud_total = write_us + gen_us + exec_us + read_us;
