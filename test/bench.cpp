@@ -7,6 +7,7 @@
 #include <chrono>
 #include <ctime>
 #include <emmintrin.h>   // _mm_stream_si64, _mm_sfence, _mm_clflush, _mm_mfence
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -63,6 +64,63 @@ using Clock = std::chrono::steady_clock;
 
 static double us_since(const Clock::time_point& t0) {
     return std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
+}
+
+// ── RAPL energy reader (Intel powercap sysfs) ─────────────────────────────────
+//
+// Reads /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj  (package)
+// and the "dram" subdomain's energy_uj for DRAM.
+// Returns 0 for unavailable domains; energy columns are omitted if so.
+
+struct ESnap { uint64_t pkg = 0; uint64_t dram = 0; };
+
+class RaplReader {
+    std::string pkg_path_;
+    std::string dram_path_;
+
+    static uint64_t read_uj(const std::string& p) {
+        std::ifstream f(p);
+        uint64_t v = 0;
+        f >> v;
+        return v;
+    }
+    static std::string read_name(const std::filesystem::path& dir) {
+        std::ifstream f(dir / "name");
+        std::string s;
+        f >> s;
+        return s;
+    }
+public:
+    RaplReader() {
+        namespace fs = std::filesystem;
+        try {
+            for (auto& d : fs::directory_iterator("/sys/class/powercap/intel-rapl")) {
+                if (!d.is_directory()) continue;
+                if (read_name(d.path()).find("package") == std::string::npos) continue;
+                pkg_path_ = (d.path() / "energy_uj").string();
+                for (auto& s : fs::directory_iterator(d.path())) {
+                    if (!s.is_directory()) continue;
+                    if (read_name(s.path()) == "dram")
+                        dram_path_ = (s.path() / "energy_uj").string();
+                }
+                break;  // use package-0 only
+            }
+        } catch (...) {}
+    }
+
+    bool pkg_ok()  const { return !pkg_path_.empty(); }
+    bool dram_ok() const { return !dram_path_.empty(); }
+
+    ESnap snap() const {
+        return {pkg_path_.empty()  ? 0u : read_uj(pkg_path_),
+                dram_path_.empty() ? 0u : read_uj(dram_path_)};
+    }
+};
+
+// Returns {pkg_mj, dram_mj} for the interval [before, after].
+static std::pair<double,double> e_delta(const ESnap& before, const ESnap& after) {
+    return {(double)(after.pkg  - before.pkg)  / 1000.0,
+            (double)(after.dram - before.dram) / 1000.0};
 }
 
 // ── Fast CXL.mem access (bank=0 only) ────────────────────────────────────────
@@ -198,7 +256,8 @@ enum class BenchOp { XOR, ADD, MUL };
 // cpu_a / cpu_b: CPU_N elements; first N_ELEM used for CUD.
 static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
                        const std::vector<uint8_t>& cpu_a,
-                       const std::vector<uint8_t>& cpu_b) {
+                       const std::vector<uint8_t>& cpu_b,
+                       const RaplReader& rapl) {
     const uint8_t  W_out    = (op == BenchOp::MUL) ? (uint8_t)(2u * W) :
                               (op == BenchOp::ADD) ? (uint8_t)(W + 1u) : W;
     const uint32_t mask_in  = (1u << W) - 1u;
@@ -213,6 +272,7 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
 
     // ── 1. CPU: N = CPU_N elements ────────────────────────────────────────────
     std::vector<uint32_t> cpu_out(CPU_N);
+    const auto e0_cpu = rapl.snap();
     auto t_cpu = Clock::now();
     if (op == BenchOp::XOR) {
         #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
@@ -228,6 +288,7 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
             cpu_out[i] = (uint32_t)am[i] * bm[i];
     }
     const double cpu_us = us_since(t_cpu);
+    const auto e1_cpu = rapl.snap();
 
     // ── 2. CUD: N = N_ELEM elements (first N_ELEM of am/bm) ──────────────────
 
@@ -246,12 +307,14 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
         CudWriteRow(mem, kBenchBank, kBaseOut + k, 0ULL);
 
     // CXL.mem write (includes bit-serial format conversion)
+    const auto e0_write = rapl.snap();
     auto t_write = Clock::now();
     pack_write(mem.base(), kBaseA,  W, am);
     pack_write(mem.base(), kBaseNA, W, na);
     pack_write(mem.base(), kBaseB,  W, bm);
     pack_write(mem.base(), kBaseNB, W, nb);
     const double write_us = us_since(t_write);
+    const auto e1_write = rapl.snap();
 
     // Instruction generation
     const BitSerialLayout la   = {kBenchBank, kBaseA,   W,     NUM_COL};
@@ -270,9 +333,11 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
     const double gen_us = us_since(t_gen);
 
     // CXL.io execute (instruction transfer + hardware execution + done poll)
+    const auto e0_exec = rapl.snap();
     auto t_exec = Clock::now();
     const bool ok = CudExecute(io, insts);
     const double exec_us = us_since(t_exec);
+    const auto e1_exec = rapl.snap();
 
     if (!ok) {
         std::cout << "  [CUD TIMEOUT]\n";
@@ -280,27 +345,54 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
     }
 
     // CXL.mem read (includes bit-serial→packed conversion)
+    const auto e0_read = rapl.snap();
     auto t_read = Clock::now();
     const auto cud_out = read_unpack(mem.base(), kBaseOut, W_out);
     const double read_us = us_since(t_read);
+    const auto e1_read = rapl.snap();
 
     const double cud_total = write_us + gen_us + exec_us + read_us;
+
+    auto [cpu_epkg,  cpu_edram]  = e_delta(e0_cpu,   e1_cpu);
+    auto [wr_epkg,   wr_edram]   = e_delta(e0_write,  e1_write);
+    auto [exec_epkg, exec_edram] = e_delta(e0_exec,   e1_exec);
+    auto [rd_epkg,   rd_edram]   = e_delta(e0_read,   e1_read);
+    const double tot_epkg  = wr_epkg  + exec_epkg  + rd_epkg;
+    const double tot_edram = wr_edram + exec_edram + rd_edram;
 
     // ── Print ─────────────────────────────────────────────────────────────────
     const char* opstr = (op == BenchOp::XOR) ? "XOR" :
                         (op == BenchOp::ADD) ? "ADD" : "MUL";
 
+    const bool has_pkg  = rapl.pkg_ok();
+    const bool has_dram = rapl.dram_ok();
+
+    // Append energy columns to the current line (no newline).
+    auto pE = [&](double pkg_mj, double dram_mj) {
+        std::cout << std::fixed << std::setprecision(1);
+        if (has_pkg)
+            std::cout << "  pkg=" << std::setw(7) << pkg_mj << " mJ";
+        if (has_dram)
+            std::cout << "  dram=" << std::setw(7) << dram_mj << " mJ";
+    };
+
     std::cout << std::fixed << std::setprecision(1)
               << "\n  ── " << opstr << "  W=" << (int)W
               << "  (out=" << (int)W_out << "bit, " << insts.size() << " insts) ──\n"
-              << "  CPU  (" << BENCH_CPU_THREADS << " threads, N="
-              << CPU_N << ")  : " << std::setw(9) << cpu_us    << " us\n"
-              << "  CUD  (N=" << N_ELEM << ")\n"
-              << "       mem-write           : " << std::setw(9) << write_us  << " us\n"
-              << "       inst-gen            : " << std::setw(9) << gen_us    << " us\n"
-              << "       io-exec             : " << std::setw(9) << exec_us   << " us\n"
-              << "       mem-read            : " << std::setw(9) << read_us   << " us\n"
-              << "       total               : " << std::setw(9) << cud_total << " us\n";
+              << "  CPU  (" << BENCH_CPU_THREADS << " threads, N=" << CPU_N << ")  : "
+              << std::setw(9) << cpu_us << " us";
+    pE(cpu_epkg, cpu_edram);
+    std::cout << "\n  CUD  (N=" << N_ELEM << ")\n"
+              << "       mem-write           : " << std::setw(9) << write_us << " us";
+    pE(wr_epkg, wr_edram);
+    std::cout << "\n       inst-gen            : " << std::setw(9) << gen_us << " us\n"
+              << "       io-exec             : " << std::setw(9) << exec_us << " us";
+    pE(exec_epkg, exec_edram);
+    std::cout << "\n       mem-read            : " << std::setw(9) << read_us << " us";
+    pE(rd_epkg, rd_edram);
+    std::cout << "\n       total               : " << std::setw(9) << cud_total << " us";
+    pE(tot_epkg, tot_edram);
+    std::cout << "\n";
 
     // Compare first N_ELEM elements (shared input between CPU and CUD)
     print_result(cpu_out, cud_out, am, bm, mask_out, W_out, op != BenchOp::XOR);
@@ -323,6 +415,8 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
     TeeBuf tee(std::cout.rdbuf(), logfile.rdbuf());
     std::streambuf* orig = std::cout.rdbuf(&tee);
 
+    const RaplReader rapl;
+
     std::cout << "\n===== CUD vs CPU Benchmark =====\n"
               << "  Log    : " << fname << "\n"
               << "  CPU    : " << BENCH_CPU_THREADS << " OMP threads"
@@ -330,7 +424,9 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
               << "  CUD    : N=" << N_ELEM << " elements  (1/" << BENCH_CPU_SCALE
               << " of CPU)\n"
               << "  Compare: first " << N_ELEM << " elements (shared input)\n"
-              << "  Note   : mem-write/read times include bit-serial conversion\n";
+              << "  Note   : mem-write/read times include bit-serial conversion\n"
+              << "  RAPL   : pkg=" << (rapl.pkg_ok()  ? "yes" : "no")
+              << "  dram="         << (rapl.dram_ok() ? "yes" : "no") << "\n";
 
     // Random data for CPU_N elements; first N_ELEM are fed to CUD as well
     std::mt19937 rng(42u);
@@ -342,13 +438,13 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
     static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
 
     std::cout << "\n[XOR]\n";
-    for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::XOR, W, a, b);
+    for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::XOR, W, a, b, rapl);
 
     std::cout << "\n[ADD]\n";
-    for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::ADD, W, a, b);
+    for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::ADD, W, a, b, rapl);
 
     std::cout << "\n[MUL]\n";
-    for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::MUL, W, a, b);
+    for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::MUL, W, a, b, rapl);
 
     std::cout << "\n================================\n"
               << "  Saved: " << fname << "\n";
