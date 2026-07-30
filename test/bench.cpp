@@ -19,16 +19,19 @@
 
 static constexpr uint32_t kBenchBank = 0;
 
-// 65536 logical elements: NUM_COL columns × 64 bits per uint64_t.
-// Each element occupies one bit position across W bit-plane rows.
+// CUD element count: NUM_COL columns × 64 bits per uint64_t = 65536 elements.
 static constexpr size_t N_ELEM = (size_t)NUM_COL * 64;
 
+// CPU element count: BENCH_CPU_SCALE × N_ELEM.
+// First N_ELEM elements are identical to CUD input for comparison.
+static constexpr size_t CPU_N = (size_t)BENCH_CPU_SCALE * N_ELEM;
+
 // Bit-serial row bases (same layout as cud_compute.cpp)
-static constexpr uint32_t kBaseA   =  0;   // W rows for a
-static constexpr uint32_t kBaseNA  =  8;   // W rows for ~a
-static constexpr uint32_t kBaseB   = 16;   // W rows for b
-static constexpr uint32_t kBaseNB  = 24;   // W rows for ~b
-static constexpr uint32_t kBaseOut = 32;   // W_out rows (max 32+16=48 for MUL W=8)
+static constexpr uint32_t kBaseA   =  0;
+static constexpr uint32_t kBaseNA  =  8;
+static constexpr uint32_t kBaseB   = 16;
+static constexpr uint32_t kBaseNB  = 24;
+static constexpr uint32_t kBaseOut = 32;   // max 32+16=48 for MUL W=8
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
@@ -40,8 +43,8 @@ static double us_since(const Clock::time_point& t0) {
 
 // ── Bit-serial packing / unpacking ───────────────────────────────────────────
 
-// Pack N_ELEM uint8_t elements into W bit-plane rows on CXL.mem.
-// Element i, bit k → column (i/64), bit (i%64) of row (base + k).
+// Pack first N_ELEM elements of data into W bit-plane rows on CXL.mem.
+// Element i, bit k → bit (i%64) of column (i/64) in row (base + k).
 static void pack_write(CxlMem& mem, uint32_t bank, uint32_t base,
                         uint8_t W, const std::vector<uint8_t>& data) {
     std::vector<uint64_t> row(NUM_COL);
@@ -55,7 +58,6 @@ static void pack_write(CxlMem& mem, uint32_t bank, uint32_t base,
 }
 
 // Unpack W_out bit-plane rows from CXL.mem into N_ELEM uint32_t values.
-// Supports W_out up to 32 (covers ADD W=8 → 9 bits, MUL W=8 → 16 bits).
 static std::vector<uint32_t> read_unpack(CxlMem& mem, uint32_t bank,
                                           uint32_t base, uint8_t W_out) {
     std::vector<uint32_t> out(N_ELEM, 0u);
@@ -68,53 +70,94 @@ static std::vector<uint32_t> read_unpack(CxlMem& mem, uint32_t bank,
     return out;
 }
 
+// ── Result printer ────────────────────────────────────────────────────────────
+
+static void print_result(const std::vector<uint32_t>& cpu_out,
+                          const std::vector<uint32_t>& cud_out,
+                          const std::vector<uint8_t>&  a,
+                          const std::vector<uint8_t>&  b,
+                          uint32_t mask_out, uint8_t W_out) {
+    // Collect mismatches over the shared N_ELEM elements
+    std::vector<size_t> bad;
+    for (size_t i = 0; i < N_ELEM; ++i)
+        if ((cpu_out[i] & mask_out) != (cud_out[i] & mask_out))
+            bad.push_back(i);
+
+    const size_t n_ok = N_ELEM - bad.size();
+
+    if (bad.empty()) {
+        std::cout << "  Result: MATCH  (" << N_ELEM << "/" << N_ELEM << " correct)\n";
+        return;
+    }
+
+    std::cout << "  Result: MISMATCH  (" << n_ok << "/" << N_ELEM << " correct, "
+              << bad.size() << " errors)\n";
+
+    // Print up to 5 mismatch examples
+    const size_t show = std::min(bad.size(), (size_t)5);
+    const int fw = (W_out <= 8) ? 2 : 4;   // hex field width
+    for (size_t k = 0; k < show; ++k) {
+        const size_t i = bad[k];
+        std::cout << "    [elem " << std::setw(6) << i << "]"
+                  << "  a=0x" << std::hex << std::setw(fw) << std::setfill('0')
+                                          << (unsigned)a[i]
+                  << "  b=0x" << std::setw(fw) << (unsigned)b[i]
+                  << "  cpu=0x" << std::setw(fw) << (cpu_out[i] & mask_out)
+                  << "  cud=0x" << std::setw(fw) << (cud_out[i] & mask_out)
+                  << std::dec << std::setfill(' ') << "\n";
+    }
+    if (bad.size() > show)
+        std::cout << "    ... (" << bad.size() - show << " more)\n";
+}
+
 // ── Per-operation benchmark ───────────────────────────────────────────────────
 
 enum class BenchOp { XOR, ADD, MUL };
 
+// cpu_a / cpu_b: CPU_N elements; first N_ELEM used for CUD.
 static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
-                       const std::vector<uint8_t>& raw_a,
-                       const std::vector<uint8_t>& raw_b) {
-    // W_out: XOR=W, ADD=W+1, MUL=2W
+                       const std::vector<uint8_t>& cpu_a,
+                       const std::vector<uint8_t>& cpu_b) {
     const uint8_t  W_out    = (op == BenchOp::MUL) ? (uint8_t)(2u * W) :
                               (op == BenchOp::ADD) ? (uint8_t)(W + 1u) : W;
     const uint32_t mask_in  = (1u << W) - 1u;
     const uint32_t mask_out = (W_out < 32u) ? ((1u << W_out) - 1u) : ~0u;
 
-    // Mask inputs to W bits
-    std::vector<uint8_t> a(N_ELEM), b(N_ELEM), na(N_ELEM), nb(N_ELEM);
-    for (size_t i = 0; i < N_ELEM; ++i) {
-        a[i]  = raw_a[i] & (uint8_t)mask_in;
-        b[i]  = raw_b[i] & (uint8_t)mask_in;
-        na[i] = (~a[i])  & (uint8_t)mask_in;
-        nb[i] = (~b[i])  & (uint8_t)mask_in;
+    // Mask CPU inputs to W bits (CPU_N elements)
+    std::vector<uint8_t> am(CPU_N), bm(CPU_N);
+    for (size_t i = 0; i < CPU_N; ++i) {
+        am[i] = cpu_a[i] & (uint8_t)mask_in;
+        bm[i] = cpu_b[i] & (uint8_t)mask_in;
     }
 
-    // ── 1. CPU: malloc + init already done (a/b/na/nb above = effective init)
-
-    // ── 2. CPU benchmark ──────────────────────────────────────────────────────
-    // OpenMP parallel for (compiler auto-vectorises with -O2 -fopenmp).
-    // No standard BLAS covers element-wise sub-byte arithmetic.
-    std::vector<uint32_t> cpu_out(N_ELEM);
+    // ── 1. CPU: N = CPU_N elements ────────────────────────────────────────────
+    std::vector<uint32_t> cpu_out(CPU_N);
     auto t_cpu = Clock::now();
     if (op == BenchOp::XOR) {
-        #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < N_ELEM; ++i)
-            cpu_out[i] = a[i] ^ b[i];
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+        for (size_t i = 0; i < CPU_N; ++i)
+            cpu_out[i] = am[i] ^ bm[i];
     } else if (op == BenchOp::ADD) {
-        #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < N_ELEM; ++i)
-            cpu_out[i] = (uint32_t)a[i] + b[i];
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+        for (size_t i = 0; i < CPU_N; ++i)
+            cpu_out[i] = (uint32_t)am[i] + bm[i];
     } else {
-        #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < N_ELEM; ++i)
-            cpu_out[i] = (uint32_t)a[i] * b[i];
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+        for (size_t i = 0; i < CPU_N; ++i)
+            cpu_out[i] = (uint32_t)am[i] * bm[i];
     }
     const double cpu_us = us_since(t_cpu);
 
-    // ── 3. CUD benchmark ─────────────────────────────────────────────────────
+    // ── 2. CUD: N = N_ELEM elements (first N_ELEM of am/bm) ──────────────────
 
-    // Setup: kZeroRow, kOnesRow, clear output (not included in timed phases)
+    // Precompute na, nb for CUD (first N_ELEM elements)
+    std::vector<uint8_t> na(N_ELEM), nb(N_ELEM);
+    for (size_t i = 0; i < N_ELEM; ++i) {
+        na[i] = (~am[i]) & (uint8_t)mask_in;
+        nb[i] = (~bm[i]) & (uint8_t)mask_in;
+    }
+
+    // Setup (not timed): kZeroRow, kOnesRow, zero output rows
     ScratchAllocator scratch(kBenchBank, row_to_mat(kBaseA));
     CudWriteRow(mem, kBenchBank, scratch.abs_row(kZeroRow),  0ULL);
     CudWriteRow(mem, kBenchBank, scratch.abs_row(kOnesRow), ~0ULL);
@@ -123,13 +166,13 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
 
     // CXL.mem write (includes bit-serial format conversion)
     auto t_write = Clock::now();
-    pack_write(mem, kBenchBank, kBaseA,  W, a);
+    pack_write(mem, kBenchBank, kBaseA,  W, am);
     pack_write(mem, kBenchBank, kBaseNA, W, na);
-    pack_write(mem, kBenchBank, kBaseB,  W, b);
+    pack_write(mem, kBenchBank, kBaseB,  W, bm);
     pack_write(mem, kBenchBank, kBaseNB, W, nb);
     const double write_us = us_since(t_write);
 
-    // Instruction generation (software, CPU side)
+    // Instruction generation
     const BitSerialLayout la   = {kBenchBank, kBaseA,   W,     NUM_COL};
     const BitSerialLayout lna  = {kBenchBank, kBaseNA,  W,     NUM_COL};
     const BitSerialLayout lb   = {kBenchBank, kBaseB,   W,     NUM_COL};
@@ -162,60 +205,41 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
 
     const double cud_total = write_us + gen_us + exec_us + read_us;
 
-    // ── 4. Compare results ────────────────────────────────────────────────────
-    size_t errors = 0;
-    for (size_t i = 0; i < N_ELEM; ++i)
-        if ((cpu_out[i] & mask_out) != (cud_out[i] & mask_out))
-            ++errors;
-
-    const std::string match_str = (errors == 0)
-        ? "MATCH"
-        : "MISMATCH (" + std::to_string(errors) + " errors)";
-
     // ── Print ─────────────────────────────────────────────────────────────────
-#ifdef _OPENMP
-    const int nthreads = omp_get_max_threads();
-#else
-    const int nthreads = 1;
-#endif
-    const char* names[] = {"XOR", "ADD", "MUL"};
-    const char* opstr = names[(int)op];
+    const char* opstr = (op == BenchOp::XOR) ? "XOR" :
+                        (op == BenchOp::ADD) ? "ADD" : "MUL";
 
     std::cout << std::fixed << std::setprecision(1)
               << "\n  ── " << opstr << "  W=" << (int)W
               << "  (out=" << (int)W_out << "bit, " << insts.size() << " insts) ──\n"
-              << "  CPU  (" << nthreads << " OMP threads) : "
-              << std::setw(9) << cpu_us    << " us\n"
-              << "  CUD  mem-write          : "
-              << std::setw(9) << write_us  << " us\n"
-              << "       inst-gen           : "
-              << std::setw(9) << gen_us    << " us\n"
-              << "       io-exec            : "
-              << std::setw(9) << exec_us   << " us\n"
-              << "       mem-read           : "
-              << std::setw(9) << read_us   << " us\n"
-              << "       total              : "
-              << std::setw(9) << cud_total << " us\n"
-              << "  Result: " << match_str << "\n";
+              << "  CPU  (" << BENCH_CPU_THREADS << " threads, N="
+              << CPU_N << ")  : " << std::setw(9) << cpu_us    << " us\n"
+              << "  CUD  (N=" << N_ELEM << ")\n"
+              << "       mem-write           : " << std::setw(9) << write_us  << " us\n"
+              << "       inst-gen            : " << std::setw(9) << gen_us    << " us\n"
+              << "       io-exec             : " << std::setw(9) << exec_us   << " us\n"
+              << "       mem-read            : " << std::setw(9) << read_us   << " us\n"
+              << "       total               : " << std::setw(9) << cud_total << " us\n";
+
+    // Compare first N_ELEM elements (shared input between CPU and CUD)
+    print_result(cpu_out, cud_out, am, bm, mask_out, W_out);
 }
 
 // ── Top-level entry point ─────────────────────────────────────────────────────
 
 void run_benchmark(CxlMem& mem, CxlIo& io) {
-    std::cout << "\n===== CUD vs CPU Benchmark =====\n";
-#ifdef _OPENMP
-    std::cout << "  OpenMP : " << omp_get_max_threads() << " threads\n";
-#else
-    std::cout << "  OpenMP : not available (single-threaded)\n";
-#endif
-    std::cout << "  Data   : N=" << N_ELEM << " elements per operation\n"
-              << "  Note   : CXL.mem write/read times include bit-serial"
-                 " format conversion\n";
+    std::cout << "\n===== CUD vs CPU Benchmark =====\n"
+              << "  CPU    : " << BENCH_CPU_THREADS << " OMP threads"
+              << ", N=" << CPU_N << " elements\n"
+              << "  CUD    : N=" << N_ELEM << " elements  (1/" << BENCH_CPU_SCALE
+              << " of CPU)\n"
+              << "  Compare: first " << N_ELEM << " elements (shared input)\n"
+              << "  Note   : mem-write/read times include bit-serial conversion\n";
 
-    // Random data shared across all widths so results are reproducible
+    // Random data for CPU_N elements; first N_ELEM are fed to CUD as well
     std::mt19937 rng(42u);
     std::uniform_int_distribution<uint32_t> dist(0, 255);
-    std::vector<uint8_t> a(N_ELEM), b(N_ELEM);
+    std::vector<uint8_t> a(CPU_N), b(CPU_N);
     for (auto& x : a) x = (uint8_t)dist(rng);
     for (auto& x : b) x = (uint8_t)dist(rng);
 
