@@ -7,7 +7,6 @@
 #include <chrono>
 #include <ctime>
 #include <emmintrin.h>   // _mm_stream_si64, _mm_sfence, _mm_clflush, _mm_mfence
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -68,9 +67,10 @@ static double us_since(const Clock::time_point& t0) {
 
 // ── RAPL energy reader (Intel powercap sysfs) ─────────────────────────────────
 //
-// Reads /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj  (package)
-// and the "dram" subdomain's energy_uj for DRAM.
-// Returns 0 for unavailable domains; energy columns are omitted if so.
+// Probes /sys/class/powercap/intel-rapl/intel-rapl:N/energy_uj  (package)
+// and intel-rapl:N:M/energy_uj where name=="dram"               (DRAM).
+// Uses explicit path construction (no filesystem::directory_iterator) so that
+// sysfs quirks don't silently suppress the dram domain.
 
 struct ESnap { uint64_t pkg = 0; uint64_t dram = 0; };
 
@@ -84,28 +84,31 @@ class RaplReader {
         f >> v;
         return v;
     }
-    static std::string read_name(const std::filesystem::path& dir) {
-        std::ifstream f(dir / "name");
+    static std::string read_name_at(const std::string& dir) {
+        std::ifstream f(dir + "/name");
         std::string s;
         f >> s;
         return s;
     }
 public:
     RaplReader() {
-        namespace fs = std::filesystem;
-        try {
-            for (auto& d : fs::directory_iterator("/sys/class/powercap/intel-rapl")) {
-                if (!d.is_directory()) continue;
-                if (read_name(d.path()).find("package") == std::string::npos) continue;
-                pkg_path_ = (d.path() / "energy_uj").string();
-                for (auto& s : fs::directory_iterator(d.path())) {
-                    if (!s.is_directory()) continue;
-                    if (read_name(s.path()) == "dram")
-                        dram_path_ = (s.path() / "energy_uj").string();
+        const std::string base = "/sys/class/powercap/intel-rapl";
+        // Try package sockets 0-3 (almost always 0 on single-socket)
+        for (int pkg = 0; pkg < 4; ++pkg) {
+            const std::string pkg_dir = base + "/intel-rapl:" + std::to_string(pkg);
+            if (read_name_at(pkg_dir).find("package") == std::string::npos) continue;
+            pkg_path_ = pkg_dir + "/energy_uj";
+            // Try sub-domains 0-7; DRAM is usually :0:0 or :0:2
+            for (int sub = 0; sub < 8; ++sub) {
+                const std::string sub_dir = pkg_dir + "/intel-rapl:" +
+                                            std::to_string(pkg) + ":" + std::to_string(sub);
+                if (read_name_at(sub_dir) == "dram") {
+                    dram_path_ = sub_dir + "/energy_uj";
+                    break;
                 }
-                break;  // use package-0 only
             }
-        } catch (...) {}
+            break;  // single-socket
+        }
     }
 
     bool pkg_ok()  const { return !pkg_path_.empty(); }
