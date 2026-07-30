@@ -1,5 +1,5 @@
 CXX      = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -O2 -fopenmp -Iinclude
+CXXFLAGS = -Wall -Wextra -std=c++17 -O3 -march=native -fopenmp -Iinclude
 BUILDDIR = build
 
 SRCS = main.cpp \
