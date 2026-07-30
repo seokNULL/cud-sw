@@ -77,37 +77,33 @@ static void print_result(const std::vector<uint32_t>& cpu_out,
                           const std::vector<uint8_t>&  a,
                           const std::vector<uint8_t>&  b,
                           uint32_t mask_out, uint8_t W_out) {
-    // Collect mismatches over the shared N_ELEM elements
-    std::vector<size_t> bad;
-    for (size_t i = 0; i < N_ELEM; ++i)
-        if ((cpu_out[i] & mask_out) != (cud_out[i] & mask_out))
-            bad.push_back(i);
-
-    const size_t n_ok = N_ELEM - bad.size();
-
-    if (bad.empty()) {
-        std::cout << "  Result: MATCH  (" << N_ELEM << "/" << N_ELEM << " correct)\n";
-        return;
+    size_t n_err = 0;
+    size_t ex_ok = N_ELEM, ex_bad = N_ELEM;   // index of one match / one mismatch
+    for (size_t i = 0; i < N_ELEM; ++i) {
+        const bool match = (cpu_out[i] & mask_out) == (cud_out[i] & mask_out);
+        if (!match) { ++n_err; if (ex_bad == N_ELEM) ex_bad = i; }
+        else         {          if (ex_ok  == N_ELEM) ex_ok  = i; }
     }
 
-    std::cout << "  Result: MISMATCH  (" << n_ok << "/" << N_ELEM << " correct, "
-              << bad.size() << " errors)\n";
-
-    // Print up to 5 mismatch examples
-    const size_t show = std::min(bad.size(), (size_t)5);
-    const int fw = (W_out <= 8) ? 2 : 4;   // hex field width
-    for (size_t k = 0; k < show; ++k) {
-        const size_t i = bad[k];
-        std::cout << "    [elem " << std::setw(6) << i << "]"
-                  << "  a=0x" << std::hex << std::setw(fw) << std::setfill('0')
-                                          << (unsigned)a[i]
-                  << "  b=0x" << std::setw(fw) << (unsigned)b[i]
+    const int fw = (W_out <= 8) ? 2 : 4;
+    auto print_elem = [&](size_t i) {
+        std::cout << std::hex << std::setfill('0')
+                  << "    [elem " << std::dec << std::setw(6) << i << "]"
+                  << "  a=0x"   << std::hex << std::setw(fw) << (unsigned)a[i]
+                  << "  b=0x"   << std::setw(fw) << (unsigned)b[i]
                   << "  cpu=0x" << std::setw(fw) << (cpu_out[i] & mask_out)
                   << "  cud=0x" << std::setw(fw) << (cud_out[i] & mask_out)
                   << std::dec << std::setfill(' ') << "\n";
+    };
+
+    if (n_err == 0) {
+        std::cout << "  Result: MATCH  (" << N_ELEM << "/" << N_ELEM << " correct)\n";
+    } else {
+        std::cout << "  Result: MISMATCH  (" << (N_ELEM - n_err) << "/" << N_ELEM
+                  << " correct, " << n_err << " errors)\n";
     }
-    if (bad.size() > show)
-        std::cout << "    ... (" << bad.size() - show << " more)\n";
+    if (ex_ok  < N_ELEM) { std::cout << "  [match]   "; print_elem(ex_ok);  }
+    if (ex_bad < N_ELEM) { std::cout << "  [mismatch]"; print_elem(ex_bad); }
 }
 
 // ── Per-operation benchmark ───────────────────────────────────────────────────
