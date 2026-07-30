@@ -76,9 +76,9 @@ static void print_result(const std::vector<uint32_t>& cpu_out,
                           const std::vector<uint32_t>& cud_out,
                           const std::vector<uint8_t>&  a,
                           const std::vector<uint8_t>&  b,
-                          uint32_t mask_out, uint8_t W_out) {
+                          uint32_t mask_out, uint8_t W_out, bool use_dec) {
     size_t n_err = 0;
-    size_t ex_ok = N_ELEM, ex_bad = N_ELEM;   // index of one match / one mismatch
+    size_t ex_ok = N_ELEM, ex_bad = N_ELEM;
     for (size_t i = 0; i < N_ELEM; ++i) {
         const bool match = (cpu_out[i] & mask_out) == (cud_out[i] & mask_out);
         if (!match) { ++n_err; if (ex_bad == N_ELEM) ex_bad = i; }
@@ -87,13 +87,22 @@ static void print_result(const std::vector<uint32_t>& cpu_out,
 
     const int fw = (W_out <= 8) ? 2 : 4;
     auto print_elem = [&](size_t i) {
-        std::cout << std::hex << std::setfill('0')
-                  << "    [elem " << std::dec << std::setw(6) << i << "]"
-                  << "  a=0x"   << std::hex << std::setw(fw) << (unsigned)a[i]
-                  << "  b=0x"   << std::setw(fw) << (unsigned)b[i]
-                  << "  cpu=0x" << std::setw(fw) << (cpu_out[i] & mask_out)
-                  << "  cud=0x" << std::setw(fw) << (cud_out[i] & mask_out)
-                  << std::dec << std::setfill(' ') << "\n";
+        if (use_dec) {
+            std::cout << "    [elem " << std::setw(6) << i << "]"
+                      << "  a="   << std::setw(3) << (unsigned)a[i]
+                      << "  b="   << std::setw(3) << (unsigned)b[i]
+                      << "  cpu=" << std::setw(5) << (cpu_out[i] & mask_out)
+                      << "  cud=" << std::setw(5) << (cud_out[i] & mask_out)
+                      << "\n";
+        } else {
+            std::cout << std::hex << std::setfill('0')
+                      << "    [elem " << std::dec << std::setw(6) << i << "]"
+                      << "  a=0x"   << std::hex << std::setw(fw) << (unsigned)a[i]
+                      << "  b=0x"   << std::setw(fw) << (unsigned)b[i]
+                      << "  cpu=0x" << std::setw(fw) << (cpu_out[i] & mask_out)
+                      << "  cud=0x" << std::setw(fw) << (cud_out[i] & mask_out)
+                      << std::dec << std::setfill(' ') << "\n";
+        }
     };
 
     if (n_err == 0) {
@@ -218,7 +227,7 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
               << "       total               : " << std::setw(9) << cud_total << " us\n";
 
     // Compare first N_ELEM elements (shared input between CPU and CUD)
-    print_result(cpu_out, cud_out, am, bm, mask_out, W_out);
+    print_result(cpu_out, cud_out, am, bm, mask_out, W_out, op != BenchOp::XOR);
 }
 
 // ── Top-level entry point ─────────────────────────────────────────────────────
