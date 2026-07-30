@@ -274,38 +274,21 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
     }
 
     // ── 1. CPU: N = CPU_N elements ────────────────────────────────────────────
-    // Compute in the narrowest correct type so AVX-512 fits more elements per
-    // register, then widen to uint32_t for result comparison.
-    //   XOR : uint8_t  → vpxorq  64 elem / 512-bit register
-    //   ADD : uint16_t → vpaddw  32 elem / 512-bit register  (sum ≤ 9 bits for W=8)
-    //   MUL : uint16_t → vpmullw 32 elem / 512-bit register  (product ≤ 16 bits for W=8)
     std::vector<uint32_t> cpu_out(CPU_N);
     const auto e0_cpu = rapl.snap();
     auto t_cpu = Clock::now();
     if (op == BenchOp::XOR) {
-        std::vector<uint8_t> tmp(CPU_N);
-        #pragma omp parallel for simd schedule(static) num_threads(BENCH_CPU_THREADS)
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
         for (size_t i = 0; i < CPU_N; ++i)
-            tmp[i] = am[i] ^ bm[i];
-        #pragma omp parallel for simd schedule(static) num_threads(BENCH_CPU_THREADS)
-        for (size_t i = 0; i < CPU_N; ++i)
-            cpu_out[i] = tmp[i];
+            cpu_out[i] = am[i] ^ bm[i];
     } else if (op == BenchOp::ADD) {
-        std::vector<uint16_t> tmp(CPU_N);
-        #pragma omp parallel for simd schedule(static) num_threads(BENCH_CPU_THREADS)
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
         for (size_t i = 0; i < CPU_N; ++i)
-            tmp[i] = (uint16_t)am[i] + (uint16_t)bm[i];
-        #pragma omp parallel for simd schedule(static) num_threads(BENCH_CPU_THREADS)
-        for (size_t i = 0; i < CPU_N; ++i)
-            cpu_out[i] = tmp[i];
+            cpu_out[i] = (uint32_t)am[i] + bm[i];
     } else {
-        std::vector<uint16_t> tmp(CPU_N);
-        #pragma omp parallel for simd schedule(static) num_threads(BENCH_CPU_THREADS)
+        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
         for (size_t i = 0; i < CPU_N; ++i)
-            tmp[i] = (uint16_t)am[i] * (uint16_t)bm[i];
-        #pragma omp parallel for simd schedule(static) num_threads(BENCH_CPU_THREADS)
-        for (size_t i = 0; i < CPU_N; ++i)
-            cpu_out[i] = tmp[i];
+            cpu_out[i] = (uint32_t)am[i] * bm[i];
     }
     const double cpu_us = us_since(t_cpu);
     const auto e1_cpu = rapl.snap();
