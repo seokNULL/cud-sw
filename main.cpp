@@ -2,6 +2,7 @@
 #include "test/test_config.h"
 #include "test/fault_search.h"
 #include "test/cud_compute.h"
+#include "test/bench.h"
 
 #include <iostream>
 #include <random>
@@ -54,7 +55,8 @@ static void print_cud_menu() {
               << "  [5]  DataCopy\n"
               << "  [6]  XOR\n"
               << "  [7]  ADD (1-8 bit)\n"
-              << "  [8]  MUL (1-4 bit)\n"
+              << "  [8]  MUL (1-8 bit)\n"
+              << "  [9]  Benchmark (CPU vs CUD)\n"
               << "  [0]  Back\n"
               << "  Select: ";
 }
@@ -84,6 +86,7 @@ static void run_cud_tests() {
                   run_add_test(mem, io, cfg);            break; }
         case 8: { const CudTestConfig cfg = make_cud_cfg();
                   run_mul_test(mem, io, cfg);            break; }
+        case 9: run_benchmark(mem, io);                  break;
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }

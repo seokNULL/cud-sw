@@ -1,5 +1,5 @@
 CXX      = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude
+CXXFLAGS = -Wall -Wextra -std=c++17 -O2 -fopenmp -Iinclude
 BUILDDIR = build
 
 SRCS = main.cpp \
@@ -12,6 +12,7 @@ SRCS = main.cpp \
        test/cud_compute.cpp \
        test/fault_search.cpp \
        test/inst_trace.cpp \
+       test/bench.cpp \
        src/cxl/enumerator.cpp \
        src/cxl/address_map.cpp \
        src/cxl/io.cpp \
@@ -33,7 +34,7 @@ TARGET = cud-cxl-run
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lgomp
 
 $(BUILDDIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
