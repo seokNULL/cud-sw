@@ -56,7 +56,6 @@ static void print_cud_menu() {
               << "  [6]  XOR\n"
               << "  [7]  ADD (1-8 bit)\n"
               << "  [8]  MUL (1-8 bit)\n"
-              << "  [9]  Benchmark (CPU vs CUD)\n"
               << "  [0]  Back\n"
               << "  Select: ";
 }
@@ -86,7 +85,6 @@ static void run_cud_tests() {
                   run_add_test(mem, io, cfg);            break; }
         case 8: { const CudTestConfig cfg = make_cud_cfg();
                   run_mul_test(mem, io, cfg);            break; }
-        case 9: run_benchmark(mem, io);                  break;
         case 0: break;
         default: std::cout << "  Invalid selection.\n"; break;
         }
@@ -104,6 +102,7 @@ static void print_menu() {
               << "  [4]  CXL.mem DAX read/write\n"
               << "\n  -- CUD API Verification --\n"
               << "  [5]  CUD operations\n"
+              << "  [6]  Benchmark (CPU vs CUD)\n"
               << "\n  [0]  Exit\n"
               << "Select: ";
 }
@@ -119,6 +118,8 @@ int main() {
         case 3: run_cxl_io();       break;
         case 4: run_cxl_mem();      break;
         case 5: run_cud_tests();    break;
+        case 6: { CxlMem mem; CxlIo io;
+                  if (CxlInit(mem, io)) { run_benchmark(mem, io); } break; }
         case 0: std::cout << "EXIT.\n"; break;
         default: std::cout << "Invalid selection.\n"; break;
         }
