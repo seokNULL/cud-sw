@@ -5,15 +5,38 @@
 #include "cud/compute_lib/scratch.h"
 
 #include <chrono>
+#include <ctime>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
+#include <streambuf>
 #include <string>
 #include <vector>
 
 #ifdef _OPENMP
 #  include <omp.h>
 #endif
+
+// ── Tee streambuf: duplicates writes to two streams ──────────────────────────
+
+class TeeBuf : public std::streambuf {
+    std::streambuf* a_;
+    std::streambuf* b_;
+public:
+    TeeBuf(std::streambuf* a, std::streambuf* b) : a_(a), b_(b) {}
+protected:
+    int overflow(int c) override {
+        if (c == EOF) return !EOF;
+        if (a_->sputc((char)c) == EOF || b_->sputc((char)c) == EOF) return EOF;
+        return c;
+    }
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        a_->sputn(s, n);
+        b_->sputn(s, n);
+        return n;
+    }
+};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -233,7 +256,22 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
 // ── Top-level entry point ─────────────────────────────────────────────────────
 
 void run_benchmark(CxlMem& mem, CxlIo& io) {
+    // Build log filename: bench_YYYYMMDD_HHMMSS.txt
+    char fname[32];
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::strftime(fname, sizeof(fname), "bench_%Y%m%d_%H%M%S.txt",
+                      std::localtime(&t));
+    }
+    std::ofstream logfile(fname);
+
+    // Tee: all std::cout output goes to both terminal and log file
+    TeeBuf tee(std::cout.rdbuf(), logfile.rdbuf());
+    std::streambuf* orig = std::cout.rdbuf(&tee);
+
     std::cout << "\n===== CUD vs CPU Benchmark =====\n"
+              << "  Log    : " << fname << "\n"
               << "  CPU    : " << BENCH_CPU_THREADS << " OMP threads"
               << ", N=" << CPU_N << " elements\n"
               << "  CUD    : N=" << N_ELEM << " elements  (1/" << BENCH_CPU_SCALE
@@ -259,5 +297,8 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
     std::cout << "\n[MUL]\n";
     for (uint8_t W : kWidths) bench_one(mem, io, BenchOp::MUL, W, a, b);
 
-    std::cout << "\n================================\n";
+    std::cout << "\n================================\n"
+              << "  Saved: " << fname << "\n";
+
+    std::cout.rdbuf(orig);  // restore cout
 }
