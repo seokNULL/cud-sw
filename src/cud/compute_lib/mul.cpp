@@ -283,26 +283,61 @@ std::vector<CudInst> gen_mul(
         return (idx < cols[k].size()) ? cols[k][idx] : zw;
     };
 
-    // Single carry wire reused across all CPA bits.
-    // Bit 0: cin = zero (HA); bits 1+: cin = carry from previous step.
-    Wire c_wire = alloc_wire(scratch);
+    auto is_zw = [&](const Wire& w) { return w.row == zw.row; };
 
-    // Bit 0: half adder (cin = zero)
-    {
-        Wire s = alloc_wire(scratch);
-        gen_fa6(insts, scratch, col_wire(0, 0), col_wire(0, 1), zw, c_wire, s);
-        insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, s.row)));
+    // Single carry wire reused across all CPA bits (in-place updated by gen_fa6).
+    Wire c_wire = alloc_wire(scratch);
+    const uint64_t cwp  = abs_pa(scratch.bank, c_wire.row);
+    const uint64_t ncwp = abs_pa(scratch.bank, c_wire.nrow);
+
+    // Write 0/1 into c_wire to propagate carry = 0 after a trivial FA step (4 insts).
+    auto zero_c = [&]() {
+        insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, zw.row)));
+        insts.push_back(cud_make_rowcopy_dst(cwp));
+        insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, zw.nrow)));
+        insts.push_back(cud_make_rowcopy_dst(ncwp));
+    };
+
+    auto emit_out = [&](uint32_t src_row, uint32_t bit) {
+        insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, src_row)));
         insts.push_back(cud_make_rowcopy_dst(
-            encode_dram_addr({0, out.bank, out.plane_row(0), 0})));
+            encode_dram_addr({0, out.bank, out.plane_row(bit), 0})));
+    };
+
+    // Bit 0: cin = zero.  Trivial when wA or wB is zero: sum = the other, carry = 0.
+    {
+        const Wire wA = col_wire(0, 0);
+        const Wire wB = col_wire(0, 1);
+        if (is_zw(wA) && is_zw(wB)) {
+            emit_out(zw.row, 0);
+            zero_c();
+        } else if (is_zw(wB)) {
+            emit_out(wA.row, 0);
+            zero_c();
+        } else if (is_zw(wA)) {
+            emit_out(wB.row, 0);
+            zero_c();
+        } else {
+            Wire s = alloc_wire(scratch);
+            gen_fa6(insts, scratch, wA, wB, zw, c_wire, s);
+            emit_out(s.row, 0);
+        }
     }
 
-    // Bits 1..N-1: full adder (cin = c_wire from previous bit; also writes to c_wire)
+    // Bits 1..N-1: cin = c_wire.  Trivial when both columns are zero: sum = cin, carry = 0.
     for (uint32_t k = 1; k < N; ++k) {
-        Wire s = alloc_wire(scratch);
-        gen_fa6(insts, scratch, col_wire(k, 0), col_wire(k, 1), c_wire, c_wire, s);
-        insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, s.row)));
-        insts.push_back(cud_make_rowcopy_dst(
-            encode_dram_addr({0, out.bank, out.plane_row(k), 0})));
+        const Wire wA   = col_wire(k, 0);
+        const Wire wB   = col_wire(k, 1);
+        const bool last = (k == N - 1);
+
+        if (is_zw(wA) && is_zw(wB)) {
+            emit_out(c_wire.row, k);
+            if (!last) zero_c();
+        } else {
+            Wire s = alloc_wire(scratch);
+            gen_fa6(insts, scratch, wA, wB, c_wire, c_wire, s);
+            emit_out(s.row, k);
+        }
     }
 
     insts.push_back(cud_make_end());

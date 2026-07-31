@@ -316,43 +316,48 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
     double seq_tot = 0, bulk_tot = 0;
 
 #if BENCH_RUN_SEQ
-    // ── CUD sequential: per-tile write → exec → read ──────────────────────────
-    for (uint32_t ti = 0; ti < N_TILES; ++ti)
-        tile_setup(mem, ti, W_out);
+    if (n_insts_per_tile > kInstBufSize) {
+        std::cout << "  CUD sequential: SKIP  (insts/tile " << n_insts_per_tile
+                  << " > buffer " << kInstBufSize << ")\n";
+    } else {
+        // ── CUD sequential: per-tile write → exec → read ──────────────────────
+        for (uint32_t ti = 0; ti < N_TILES; ++ti)
+            tile_setup(mem, ti, W_out);
 
-    double seq_write = 0, seq_exec = 0, seq_read = 0;
-    const auto e0_seq = rapl.snap();
+        double seq_write = 0, seq_exec = 0, seq_read = 0;
+        const auto e0_seq = rapl.snap();
 
-    for (uint32_t ti = 0; ti < N_TILES; ++ti) {
-        const auto tw = Clock::now();
-        tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
-        seq_write += us_since(tw);
+        for (uint32_t ti = 0; ti < N_TILES; ++ti) {
+            const auto tw = Clock::now();
+            tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
+            seq_write += us_since(tw);
 
-        const auto insts = tile_gen_insts(ti, op, W, W_out);
+            const auto insts = tile_gen_insts(ti, op, W, W_out);
 
-        const auto te = Clock::now();
-        if (!CudExecute(io, insts)) {
-            std::cout << "  [CUD TIMEOUT tile " << ti << "]\n";
-            return;
+            const auto te = Clock::now();
+            if (!CudExecute(io, insts)) {
+                std::cout << "  [CUD TIMEOUT tile " << ti << "]\n";
+                return;
+            }
+            seq_exec += us_since(te);
+
+            const auto tr = Clock::now();
+            auto out = tile_read(mem.base(), ti, W_out);
+            seq_read += us_since(tr);
+
+            if (ti == 0) ref_out = std::move(out);
         }
-        seq_exec += us_since(te);
+        const auto e1_seq = rapl.snap();
+        seq_tot = seq_write + seq_exec + seq_read;
 
-        const auto tr = Clock::now();
-        auto out = tile_read(mem.base(), ti, W_out);
-        seq_read += us_since(tr);
-
-        if (ti == 0) ref_out = std::move(out);
+        std::cout << "  CUD sequential (" << N_TILES << " tiles):\n"
+                  << "       write total         : " << std::setw(9) << seq_write << " us\n"
+                  << "       exec  total         : " << std::setw(9) << seq_exec  << " us\n"
+                  << "       read  total         : " << std::setw(9) << seq_read  << " us\n"
+                  << "       total               : " << std::setw(9) << seq_tot   << " us";
+        pE(e0_seq, e1_seq);
+        std::cout << "\n";
     }
-    const auto e1_seq = rapl.snap();
-    seq_tot = seq_write + seq_exec + seq_read;
-
-    std::cout << "  CUD sequential (" << N_TILES << " tiles):\n"
-              << "       write total         : " << std::setw(9) << seq_write << " us\n"
-              << "       exec  total         : " << std::setw(9) << seq_exec  << " us\n"
-              << "       read  total         : " << std::setw(9) << seq_read  << " us\n"
-              << "       total               : " << std::setw(9) << seq_tot   << " us";
-    pE(e0_seq, e1_seq);
-    std::cout << "\n";
 #endif
 
 #if BENCH_RUN_BULK
