@@ -324,7 +324,7 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
         for (uint32_t ti = 0; ti < N_TILES; ++ti)
             tile_setup(mem, ti, W_out);
 
-        double seq_write = 0, seq_exec = 0, seq_read = 0;
+        double seq_write = 0, seq_gen = 0, seq_exec = 0, seq_read = 0;
         const auto e0_seq = rapl.snap();
 
         for (uint32_t ti = 0; ti < N_TILES; ++ti) {
@@ -332,7 +332,9 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
             tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
             seq_write += us_since(tw);
 
+            const auto tg = Clock::now();
             const auto insts = tile_gen_insts(ti, op, W, W_out);
+            seq_gen += us_since(tg);
 
             const auto te = Clock::now();
             if (!CudExecute(io, insts)) {
@@ -348,10 +350,11 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
             if (ti == 0) ref_out = std::move(out);
         }
         const auto e1_seq = rapl.snap();
-        seq_tot = seq_write + seq_exec + seq_read;
+        seq_tot = seq_write + seq_gen + seq_exec + seq_read;
 
         std::cout << "  CUD sequential (" << N_TILES << " tiles):\n"
                   << "       write total         : " << std::setw(9) << seq_write << " us\n"
+                  << "       gen   total         : " << std::setw(9) << seq_gen   << " us\n"
                   << "       exec  total         : " << std::setw(9) << seq_exec  << " us\n"
                   << "       read  total         : " << std::setw(9) << seq_read  << " us\n"
                   << "       total               : " << std::setw(9) << seq_tot   << " us";
@@ -369,18 +372,20 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
         for (uint32_t ti = 0; ti < N_TILES; ++ti)
             tile_setup(mem, ti, W_out);
 
-        std::vector<CudInst> bulk_insts;
-        for (uint32_t ti = 0; ti < N_TILES; ++ti) {
-            const auto v = tile_gen_insts(ti, op, W, W_out);
-            bulk_insts.insert(bulk_insts.end(), v.begin(), v.end());
-        }
-
         const auto e0_bw = rapl.snap();
         const auto tw_b  = Clock::now();
         for (uint32_t ti = 0; ti < N_TILES; ++ti)
             tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
         const double bulk_write = us_since(tw_b);
         const auto e1_bw = rapl.snap();
+
+        const auto tg_b = Clock::now();
+        std::vector<CudInst> bulk_insts;
+        for (uint32_t ti = 0; ti < N_TILES; ++ti) {
+            const auto v = tile_gen_insts(ti, op, W, W_out);
+            bulk_insts.insert(bulk_insts.end(), v.begin(), v.end());
+        }
+        const double bulk_gen = us_since(tg_b);
 
         const auto e0_be = rapl.snap();
         const auto te_b  = Clock::now();
@@ -399,12 +404,13 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
         }
         const double bulk_read = us_since(tr_b);
         const auto e1_br = rapl.snap();
-        bulk_tot = bulk_write + bulk_exec + bulk_read;
+        bulk_tot = bulk_write + bulk_gen + bulk_exec + bulk_read;
 
         std::cout << "  CUD bulk      (" << N_TILES << " tiles):\n"
                   << "       write               : " << std::setw(9) << bulk_write << " us";
         pE(e0_bw, e1_bw);
-        std::cout << "\n       exec                : " << std::setw(9) << bulk_exec  << " us";
+        std::cout << "\n       gen                 : " << std::setw(9) << bulk_gen   << " us"
+                  << "\n       exec                : " << std::setw(9) << bulk_exec  << " us";
         pE(e0_be, e1_be);
         std::cout << "\n       read                : " << std::setw(9) << bulk_read  << " us";
         pE(e0_br, e1_br);
