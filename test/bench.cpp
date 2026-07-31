@@ -247,7 +247,9 @@ static void print_result(const std::vector<uint32_t>& cpu_out,
 static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_TILES,
                       const std::vector<uint8_t>& cpu_a, const std::vector<uint8_t>& cpu_b,
                       const RaplReader& rapl) {
-    const uint8_t  W_out    = (op == BenchOp::MUL) ? (uint8_t)(2u * W) :
+    // MUL W=1: a*b = AND(a,b), result ∈ {0,1} → 1-bit output suffices.
+    // MUL W>1: W×W → 2W bits (standard bit-serial multiplier).
+    const uint8_t  W_out    = (op == BenchOp::MUL) ? (W == 1 ? (uint8_t)1u : (uint8_t)(2u * W)) :
                               (op == BenchOp::ADD) ? (uint8_t)(W + 1u) : W;
     const uint32_t mask_in  = (1u << W) - 1u;
     const uint32_t mask_out = (W_out < 32u) ? ((1u << W_out) - 1u) : ~0u;

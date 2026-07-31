@@ -213,8 +213,19 @@ std::vector<CudInst> gen_mul(
     ScratchAllocator& scratch)
 {
     assert(W >= 1 && W <= 8);
-    assert(a.bit_width == W && b.bit_width == W && out.bit_width == 2u * W);
+    assert(a.bit_width == W && b.bit_width == W);
     assert(a.bank == b.bank && a.bank == out.bank && a.bank == scratch.bank);
+
+    // W=1: result is AND(a,b), fits in 1 bit — skip the full multiplier entirely.
+    if (W == 1) {
+        assert(out.bit_width >= 1);
+        std::vector<CudInst> insts;
+        pp_and(insts, scratch, a.plane_pa(0), b.plane_pa(0), out.plane_row(0));
+        insts.push_back(cud_make_end());
+        return insts;
+    }
+
+    assert(out.bit_width == 2u * W);
 
     // Reserve [kInstGenCmpBase, kMGroupEnd) for the 6-group FA area.
     if (scratch.next < kMGroupEnd) scratch.next = kMGroupEnd;
