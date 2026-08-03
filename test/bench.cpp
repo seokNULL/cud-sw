@@ -309,15 +309,17 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
     for (auto& x : a) x = (uint8_t)dist(rng);
     for (auto& x : b) x = (uint8_t)dist(rng);
 
-    std::cout << "\n[Bitwise]\n";
+    std::cout << "\n[Low-level]\n";
     for (BenchOp op : {BenchOp::XOR, BenchOp::AND, BenchOp::OR})
         for (uint8_t W : kWidths)
             bench_one(mem, io, op, W, a, b);
 
-    std::cout << "\n[Arithmetic]\n";
+    std::cout << "\n[Mid-level]\n";
     for (BenchOp op : {BenchOp::ADD, BenchOp::MUL})
         for (uint8_t W : kWidths)
             bench_one(mem, io, op, W, a, b);
+
+    // [High-level] — GEMV and future operations
 
     std::cout << "\n================================\n"
               << "  Saved: " << fname << "\n";
