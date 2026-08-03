@@ -81,14 +81,48 @@ std::vector<CudInst> gen_add(
 //   W=1: AND(a,b) fast path — 12 insts.
 //   W>1: partial products W²×22 insts + Wallace FAs×47 + CPA with trivial-case
 //        optimisation (FA(a,0,0) and FA(0,0,c) replaced by rowcopy).
-//   Approx: W=2: 195  W=4: 937  W=8: ~6100
+//   Measured: W=2: 195  W=4: 937  W=8: 4077
 // CPU must pre-compute not_a and not_b and write all four to DRAM.
 // out.bit_width must equal 2*W (or ≥1 for W=1).
+//
+// If not_out is non-null, the product's complement is also written to it
+// (out.bit_width each) — every CPA output bit already has its complement
+// available internally (gen_fa6 always produces sum and ~sum together), so
+// this costs one extra rowcopy pair per bit and no new arithmetic. Lets a
+// caller (e.g. gen_gemv) chain this product straight into gen_add without an
+// extra NOT step.
 std::vector<CudInst> gen_mul(
     const BitSerialLayout& a,
     const BitSerialLayout& not_a,
     const BitSerialLayout& b,
     const BitSerialLayout& not_b,
     const BitSerialLayout& out,
+    uint8_t W,
+    ScratchAllocator& scratch,
+    const BitSerialLayout* not_out = nullptr);
+
+// GEMV: out = sum_{i=0}^{len-1} a[i] * b[i]   (dot product / MAC reduction)
+//
+// a[i]: W-bit scalar, broadcast to the same value in every lane (element).
+// b[i]: W-bit vector, one value per lane (a row of the matrix).
+// out:  running accumulator and final result, fixed at 2*W bits — bits beyond
+//       2*W are dropped each add, so pick len so the true sum fits in 2*W
+//       bits (or accept truncation as a benchmark approximation).
+//
+// i=0 is a single gen_mul directly into out (with not_out); each subsequent
+// i is gen_mul into a scratch product, folded into out with a ripple-carry
+// accumulate (same per-bit full-adder as gen_mul's own CPA — sum and ~sum
+// together, so no NOT round-trip is ever needed). No new arithmetic
+// primitive, just gen_mul chained into itself. Scratch is rewound between
+// iterations, so cost does not grow with len.
+std::vector<CudInst> gen_gemv(
+    const std::vector<BitSerialLayout>& a,
+    const std::vector<BitSerialLayout>& not_a,
+    const std::vector<BitSerialLayout>& b,
+    const std::vector<BitSerialLayout>& not_b,
+    const BitSerialLayout& prod,
+    const BitSerialLayout& not_prod,
+    const BitSerialLayout& out,
+    const BitSerialLayout& not_out,
     uint8_t W,
     ScratchAllocator& scratch);

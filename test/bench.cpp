@@ -50,6 +50,14 @@ static constexpr uint32_t kOffOut = 32;  // up to +15 for MUL W=8
 
 static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
 
+// GEMV row layout: A[i]/NA[i]/B[i]/NB[i] (8 bit each) for i in [0, len), plus
+// scratch prod/nprod and the out/nout accumulator, all placed past the
+// compute zone (rows 101-900 are used internally by gen_mul/gen_fa6) so they
+// can't collide with it. This is bench-local, not part of scratch.h's map.
+static constexpr uint8_t  kGemvW      = 8;   // GEMV operates on 8-bit inputs
+static constexpr uint32_t kGemvBase   = 901; // first row past the compute zone
+static constexpr uint32_t kGemvStride = 4u * kGemvW;  // A,NA,B,NB per i
+
 // ── Timing ────────────────────────────────────────────────────────────────────
 
 using Clock = std::chrono::steady_clock;
@@ -285,6 +293,128 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W,
     print_result(cpu_out, cud_out, a_tile, b_tile, mask_out, W_out, use_dec);
 }
 
+// ── GEMV benchmark ────────────────────────────────────────────────────────────
+//
+// out[lane] = sum_{i<len} A[i] * B[i][lane], truncated to 16 bits (gen_gemv's
+// fixed accumulator width). A[i] is broadcast to every lane; B[i] varies.
+
+static void bench_gemv(CxlMem& mem, CxlIo& io, uint32_t len) {
+    const uint32_t W     = kGemvW;
+    const uint32_t W_out = 2u * W;  // 16-bit accumulator
+    const uint32_t prod_row  = kGemvBase + len * kGemvStride;
+    const uint32_t nprod_row = prod_row  + W_out;
+    const uint32_t out_row   = nprod_row + W_out;
+    const uint32_t nout_row  = out_row   + W_out;
+
+    const uint32_t cpu_n = (uint32_t)CPU_N;
+    std::mt19937 rng(7u);
+    std::uniform_int_distribution<uint32_t> dist(0, 255);
+    std::vector<uint8_t> A(len);
+    std::vector<std::vector<uint8_t>> B(len, std::vector<uint8_t>(cpu_n));
+    for (uint32_t i = 0; i < len; ++i) {
+        A[i] = (uint8_t)dist(rng);
+        for (auto& v : B[i]) v = (uint8_t)dist(rng);
+    }
+
+    // ── CPU baseline ──────────────────────────────────────────────────────────
+    std::vector<uint32_t> cpu_out(cpu_n);
+    const auto t_cpu = Clock::now();
+    #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+    for (uint32_t lane = 0; lane < cpu_n; ++lane) {
+        uint32_t acc = 0;
+        for (uint32_t i = 0; i < len; ++i)
+            acc += (uint32_t)A[i] * (uint32_t)B[i][lane];
+        cpu_out[lane] = acc & 0xFFFFu;
+    }
+    const double cpu_us = us_since(t_cpu);
+
+    std::vector<BitSerialLayout> la(len), lna(len), lb(len), lnb(len);
+    for (uint32_t i = 0; i < len; ++i) {
+        la[i]  = {kBenchBank, tile_row(0, kGemvBase + i * kGemvStride),            W, NUM_COL};
+        lna[i] = {kBenchBank, tile_row(0, kGemvBase + i * kGemvStride + W),        W, NUM_COL};
+        lb[i]  = {kBenchBank, tile_row(0, kGemvBase + i * kGemvStride + 2u * W),   W, NUM_COL};
+        lnb[i] = {kBenchBank, tile_row(0, kGemvBase + i * kGemvStride + 3u * W),   W, NUM_COL};
+    }
+    const BitSerialLayout lprod  = {kBenchBank, tile_row(0, prod_row),  W_out, NUM_COL};
+    const BitSerialLayout lnprod = {kBenchBank, tile_row(0, nprod_row), W_out, NUM_COL};
+    const BitSerialLayout lout   = {kBenchBank, tile_row(0, out_row),   W_out, NUM_COL};
+    const BitSerialLayout lnout  = {kBenchBank, tile_row(0, nout_row),  W_out, NUM_COL};
+
+    ScratchAllocator count_scratch(kBenchBank, 0);
+    const size_t n_insts = gen_gemv(la, lna, lb, lnb, lprod, lnprod, lout, lnout,
+                                     (uint8_t)W, count_scratch).size();
+
+    std::cout << std::fixed << std::setprecision(1)
+              << "\n  ── GEMV  a=" << len << "  W=" << W
+              << "  (out=" << W_out << "bit, " << n_insts << " insts) ──\n";
+    std::cout << "  CPU  (" << BENCH_CPU_THREADS << " threads, N=" << cpu_n << ")  : "
+              << std::setw(9) << cpu_us << " us\n";
+
+    // ── CUD: write → gen → exec → read ───────────────────────────────────────
+    CudWriteRow(mem, kBenchBank, tile_row(0, kZeroRow), 0ULL);
+    CudWriteRow(mem, kBenchBank, tile_row(0, kOnesRow), ~0ULL);
+    for (uint32_t k = 0; k < W_out; ++k) {
+        CudWriteRow(mem, kBenchBank, tile_row(0, out_row  + k), 0ULL);
+        CudWriteRow(mem, kBenchBank, tile_row(0, nout_row + k), ~0ULL);
+    }
+
+    const auto tw = Clock::now();
+    for (uint32_t i = 0; i < len; ++i) {
+        const std::vector<uint8_t> a_bcast(N_ELEM, A[i]);
+        const std::vector<uint8_t> na_bcast(N_ELEM, (uint8_t)~A[i]);
+        const std::vector<uint8_t> b_tile(B[i].begin(), B[i].begin() + N_ELEM);
+        std::vector<uint8_t> nb_tile(N_ELEM);
+        for (size_t k = 0; k < N_ELEM; ++k) nb_tile[k] = (uint8_t)~b_tile[k];
+        pack_write(mem.base(), la[i].base_row,  W, a_bcast);
+        pack_write(mem.base(), lna[i].base_row, W, na_bcast);
+        pack_write(mem.base(), lb[i].base_row,  W, b_tile);
+        pack_write(mem.base(), lnb[i].base_row, W, nb_tile);
+    }
+    const double t_write = us_since(tw);
+
+    const auto tg = Clock::now();
+    ScratchAllocator scratch(kBenchBank, 0);
+    const auto insts = gen_gemv(la, lna, lb, lnb, lprod, lnprod, lout, lnout, (uint8_t)W, scratch);
+    const double t_gen = us_since(tg);
+
+    const auto te = Clock::now();
+    if (!CudExecute(io, insts)) {
+        std::cout << "  [CUD TIMEOUT]\n";
+        return;
+    }
+    const double t_exec = us_since(te);
+
+    const auto tr = Clock::now();
+    const auto cud_out = read_unpack(mem.base(), tile_row(0, out_row), (uint8_t)W_out);
+    const double t_read = us_since(tr);
+
+    const double t_total = t_write + t_gen + t_exec + t_read;
+    std::cout << "  CUD:\n"
+              << "       write_input         : " << std::setw(9) << t_write << " us\n"
+              << "       generate_insts      : " << std::setw(9) << t_gen   << " us\n"
+              << "       execute             : " << std::setw(9) << t_exec  << " us\n"
+              << "       read_result         : " << std::setw(9) << t_read  << " us\n"
+              << "       total               : " << std::setw(9) << t_total << " us\n";
+
+    size_t n_err = 0, ex_ok = N_ELEM, ex_bad = N_ELEM;
+    for (size_t lane = 0; lane < N_ELEM; ++lane) {
+        const bool match = cpu_out[lane] == cud_out[lane];
+        if (!match) { ++n_err; if (ex_bad == N_ELEM) ex_bad = lane; }
+        else         {          if (ex_ok  == N_ELEM) ex_ok  = lane; }
+    }
+    if (n_err == 0)
+        std::cout << "  MATCH  (" << N_ELEM << "/" << N_ELEM << " correct)\n";
+    else
+        std::cout << "  MISMATCH  (" << (N_ELEM - n_err) << "/" << N_ELEM
+                  << " correct, " << n_err << " errors)\n";
+    if (ex_ok  < N_ELEM)
+        std::cout << "    [match]  [lane " << ex_ok  << "]  cpu=" << cpu_out[ex_ok]
+                  << "  cud=" << cud_out[ex_ok] << "\n";
+    if (ex_bad < N_ELEM)
+        std::cout << "    [error]  [lane " << ex_bad << "]  cpu=" << cpu_out[ex_bad]
+                  << "  cud=" << cud_out[ex_bad] << "\n";
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 void run_benchmark(CxlMem& mem, CxlIo& io) {
@@ -319,7 +449,8 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
         for (uint8_t W : kWidths)
             bench_one(mem, io, op, W, a, b);
 
-    // [High-level] — GEMV and future operations
+    std::cout << "\n[High-level]\n";
+    bench_gemv(mem, io, BENCH_GEMV_LEN);
 
     std::cout << "\n================================\n"
               << "  Saved: " << fname << "\n";

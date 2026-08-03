@@ -2,35 +2,13 @@
 #include "../../../include/cud/compute_lib/compute_rows.h"
 #include "../../../include/cxl/address_map.h"
 #include "../cud_inst_helpers.h"
+#include "fa6.h"
 
 #include <cassert>
 #include <vector>
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
-
-// ROWCOPY_DST without LAST bit.
-static inline CudInst rowcopy_dst_cont(uint64_t p) {
-    return CUD_FIELD_OPCODE(CUD_OP_ROWCOPY_DST) | cud_addr_fields(p);
-}
-
-// Bit-plane wire: absolute DRAM rows for a value and its complement.
-struct Wire { uint32_t row, nrow; };
-
-static inline uint64_t abs_pa(uint32_t bank, uint32_t abs_row) {
-    return encode_dram_addr({0, bank, abs_row, 0});
-}
-
-// Allocate two consecutive scratch rows and return as a Wire.
-static Wire alloc_wire(ScratchAllocator& sc) {
-    const uint32_t r  = sc.alloc(1);
-    const uint32_t nr = sc.alloc(1);
-    return {sc.abs_row(r), sc.abs_row(nr)};
-}
-
-// Wire representing the constant 0 / 1 (pre-initialised constant rows).
-static Wire zero_wire(const ScratchAllocator& sc) {
-    return {sc.abs_row(kZeroRow), sc.abs_row(kOnesRow)};
-}
+// Wire, alloc_wire, zero_wire, abs_pa, gen_fa6, kMGroupEnd: shared with
+// gemv.cpp, defined in fa6.h/fa6.cpp.
 
 // ── Partial product generation ────────────────────────────────────────────────
 // Uses the single mode-0 group at kInstGenCmpBase (same as xor.cpp / add.cpp).
@@ -80,137 +58,17 @@ static Wire gen_partial_product(std::vector<CudInst>& v, ScratchAllocator& sc,
     return w;
 }
 
-// ── 6-group Full Adder — 47 instructions ─────────────────────────────────────
-//
-// Produces sum = XOR(a,b,cin) and carry = MAJ3(a,b,cin), plus their complements.
-//
-// Mode-0 compute groups (stride=16 from kInstGenCmpBase=112):
-//   g=0 kMGe    112  carry      = MAJ3(a, b, cin)
-//   g=1 kMGf    128  ~carry     = MAJ3(~a, ~b, ~cin)
-//   g=2 kMGis   144  inner_sum  = MAJ3(b, cin, ~carry)
-//   g=3 kMGsum  160  sum        = MAJ3(a, inner_sum, ~carry)
-//   g=4 kMGnis  176  ~inner_sum = MAJ3(~b, ~cin, carry)
-//   g=5 kMGnsum 192  ~sum       = MAJ3(~a, ~inner_sum, carry)
-//
-// Caller pre-allocates s_wire and c_wire (c_wire may equal cin for RCA).
-// Pre-load: 25 insts.  Execute: 22 insts.  Total: 47 insts.
-
-static constexpr uint32_t kMGrpStride = 16u;
-static constexpr uint32_t kMNumGroups = 6u;
-static constexpr uint32_t kMGroupEnd  = kInstGenCmpBase + kMNumGroups * kMGrpStride; // 208
-
-static constexpr uint32_t kMGe    = 0;
-static constexpr uint32_t kMGf    = 1;
-static constexpr uint32_t kMGis   = 2;
-static constexpr uint32_t kMGsum  = 3;
-static constexpr uint32_t kMGnis  = 4;
-static constexpr uint32_t kMGnsum = 5;
-
-// Mode-0 member offsets: cmp0=+0, cmp1=+1, cmp2=+8, frac=+9.
-static constexpr uint32_t kMMOff[4] = {0u, 1u, 8u, 9u};
-
-static uint64_t mg(const ScratchAllocator& sc, uint32_t g, uint32_t m) {
-    return abs_pa(sc.bank, sc.abs_row(kInstGenCmpBase + g * kMGrpStride + kMMOff[m]));
-}
-
-static void gen_fa6(std::vector<CudInst>& v, const ScratchAllocator& sc,
-                    Wire a, Wire b, Wire cin, Wire c_wire, Wire s_wire) {
-    const uint64_t zp  = abs_pa(sc.bank, sc.abs_row(kZeroRow));
-    const uint64_t ap  = abs_pa(sc.bank, a.row);
-    const uint64_t nap = abs_pa(sc.bank, a.nrow);
-    const uint64_t bp  = abs_pa(sc.bank, b.row);
-    const uint64_t nbp = abs_pa(sc.bank, b.nrow);
-    const uint64_t cp  = abs_pa(sc.bank, cin.row);
-    const uint64_t ncp = abs_pa(sc.bank, cin.nrow);
-    const uint64_t cwp = abs_pa(sc.bank, c_wire.row);
-    const uint64_t ncwp= abs_pa(sc.bank, c_wire.nrow);
-    const uint64_t sp  = abs_pa(sc.bank, s_wire.row);
-    const uint64_t nsp = abs_pa(sc.bank, s_wire.nrow);
-
-    // ── Pre-load: 25 insts ────────────────────────────────────────────────────
-    // a → kGe.cmp0, kGsum.cmp0
-    v.push_back(cud_make_rowcopy_src(ap));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGe,    0)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGsum, 0)));
-
-    // ~a → kGf.cmp0, kGnsum.cmp0
-    v.push_back(cud_make_rowcopy_src(nap));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGf,    0)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGnsum, 0)));
-
-    // b → kGe.cmp1, kGis.cmp0
-    v.push_back(cud_make_rowcopy_src(bp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGe,  1)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGis, 0)));
-
-    // ~b → kGf.cmp1, kGnis.cmp0
-    v.push_back(cud_make_rowcopy_src(nbp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGf,   1)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGnis, 0)));
-
-    // cin → kGe.cmp2, kGis.cmp1
-    v.push_back(cud_make_rowcopy_src(cp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGe,  2)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGis, 1)));
-
-    // ~cin → kGf.cmp2, kGnis.cmp1
-    v.push_back(cud_make_rowcopy_src(ncp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGf,   2)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGnis, 1)));
-
-    // zeros → all 6 frac rows (output slots cleared)
-    v.push_back(cud_make_rowcopy_src(zp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGe,    3)));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGf,    3)));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGis,   3)));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGsum,  3)));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGnis,  3)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGnsum, 3)));
-
-    // ── Execute: 22 insts ─────────────────────────────────────────────────────
-    // carry = MAJ3(a,b,cin); fan-out → c_wire, kGnis.cmp2, kGnsum.cmp2
-    v.push_back(cud_make_maj3(mg(sc, kMGe, 0), kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(mg(sc, kMGe, 3)));
-    v.push_back(rowcopy_dst_cont(cwp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGnis,  2)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGnsum, 2)));
-
-    // ~carry = MAJ3(~a,~b,~cin); fan-out → nc_wire, kGis.cmp2, kGsum.cmp2
-    v.push_back(cud_make_maj3(mg(sc, kMGf, 0), kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(mg(sc, kMGf, 3)));
-    v.push_back(rowcopy_dst_cont(ncwp));
-    v.push_back(rowcopy_dst_cont(mg(sc, kMGis,  2)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGsum, 2)));
-
-    // inner_sum = MAJ3(b, cin, ~carry) → kGsum.cmp1
-    v.push_back(cud_make_maj3(mg(sc, kMGis, 0), kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(mg(sc, kMGis, 3)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGsum, 1)));
-
-    // ~inner_sum = MAJ3(~b, ~cin, carry) → kGnsum.cmp1
-    v.push_back(cud_make_maj3(mg(sc, kMGnis, 0), kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(mg(sc, kMGnis, 3)));
-    v.push_back(cud_make_rowcopy_dst(mg(sc, kMGnsum, 1)));
-
-    // sum = MAJ3(a, inner_sum, ~carry) → s_wire.row
-    v.push_back(cud_make_maj3(mg(sc, kMGsum, 0), kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(mg(sc, kMGsum, 3)));
-    v.push_back(cud_make_rowcopy_dst(sp));
-
-    // ~sum = MAJ3(~a, ~inner_sum, carry) → s_wire.nrow
-    v.push_back(cud_make_maj3(mg(sc, kMGnsum, 0), kCmpFracPos, 0u));
-    v.push_back(cud_make_rowcopy_src(mg(sc, kMGnsum, 3)));
-    v.push_back(cud_make_rowcopy_dst(nsp));
-}
-
 // ── gen_mul: W × W → 2W multiplication (Wallace tree + CPA) ─────────────────
+// Uses the shared gen_fa6 (fa6.h) for both the Wallace-tree reduction and the
+// final carry-propagate addition.
 
 std::vector<CudInst> gen_mul(
     const BitSerialLayout& a, const BitSerialLayout& not_a,
     const BitSerialLayout& b, const BitSerialLayout& not_b,
     const BitSerialLayout& out,
     uint8_t W,
-    ScratchAllocator& scratch)
+    ScratchAllocator& scratch,
+    const BitSerialLayout* not_out)
 {
     assert(W >= 1 && W <= 8);
     assert(a.bit_width == W && b.bit_width == W);
@@ -221,6 +79,10 @@ std::vector<CudInst> gen_mul(
         assert(out.bit_width >= 1);
         std::vector<CudInst> insts;
         pp_and(insts, scratch, a.plane_pa(0), b.plane_pa(0), out.plane_row(0));
+        if (not_out) {
+            assert(not_out->bit_width >= 1);
+            pp_or(insts, scratch, not_a.plane_pa(0), not_b.plane_pa(0), not_out->plane_row(0));
+        }
         insts.push_back(cud_make_end());
         return insts;
     }
@@ -298,10 +160,15 @@ std::vector<CudInst> gen_mul(
         insts.push_back(cud_make_rowcopy_dst(ncwp));
     };
 
-    auto emit_out = [&](uint32_t src_row, uint32_t bit) {
+    auto emit_out = [&](uint32_t src_row, uint32_t src_nrow, uint32_t bit) {
         insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, src_row)));
         insts.push_back(cud_make_rowcopy_dst(
             encode_dram_addr({0, out.bank, out.plane_row(bit), 0})));
+        if (not_out) {
+            insts.push_back(cud_make_rowcopy_src(abs_pa(scratch.bank, src_nrow)));
+            insts.push_back(cud_make_rowcopy_dst(
+                encode_dram_addr({0, not_out->bank, not_out->plane_row(bit), 0})));
+        }
     };
 
     // Bit 0: cin = zero.  Trivial when wA or wB is zero: sum = the other, carry = 0.
@@ -309,18 +176,18 @@ std::vector<CudInst> gen_mul(
         const Wire wA = col_wire(0, 0);
         const Wire wB = col_wire(0, 1);
         if (is_zw(wA) && is_zw(wB)) {
-            emit_out(zw.row, 0);
+            emit_out(zw.row, zw.nrow, 0);
             zero_c();
         } else if (is_zw(wB)) {
-            emit_out(wA.row, 0);
+            emit_out(wA.row, wA.nrow, 0);
             zero_c();
         } else if (is_zw(wA)) {
-            emit_out(wB.row, 0);
+            emit_out(wB.row, wB.nrow, 0);
             zero_c();
         } else {
             Wire s = alloc_wire(scratch);
             gen_fa6(insts, scratch, wA, wB, zw, c_wire, s);
-            emit_out(s.row, 0);
+            emit_out(s.row, s.nrow, 0);
         }
     }
 
@@ -331,12 +198,12 @@ std::vector<CudInst> gen_mul(
         const bool last = (k == N - 1);
 
         if (is_zw(wA) && is_zw(wB)) {
-            emit_out(c_wire.row, k);
+            emit_out(c_wire.row, c_wire.nrow, k);
             if (!last) zero_c();
         } else {
             Wire s = alloc_wire(scratch);
             gen_fa6(insts, scratch, wA, wB, c_wire, c_wire, s);
-            emit_out(s.row, k);
+            emit_out(s.row, s.nrow, k);
         }
     }
 
