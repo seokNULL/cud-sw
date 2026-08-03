@@ -48,54 +48,13 @@ static constexpr uint32_t kOffB   = 16;
 static constexpr uint32_t kOffNB  = 24;
 static constexpr uint32_t kOffOut = 32;  // up to +15 for MUL W=8
 
-static constexpr uint8_t  kWidths[]    = {1, 2, 4, 8};
-static constexpr size_t   kInstBufSize = 1024;  // CUD hardware instruction buffer limit
+static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
 using Clock = std::chrono::steady_clock;
 static double us_since(const Clock::time_point& t0) {
     return std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
-}
-
-// ── RAPL ─────────────────────────────────────────────────────────────────────
-
-struct ESnap { uint64_t pkg = 0; uint64_t dram = 0; };
-
-class RaplReader {
-    std::string pkg_path_, dram_path_;
-    static uint64_t read_uj(const std::string& p) {
-        std::ifstream f(p); uint64_t v = 0; f >> v; return v;
-    }
-    static std::string read_name(const std::string& dir) {
-        std::ifstream f(dir + "/name"); std::string s; f >> s; return s;
-    }
-public:
-    RaplReader() {
-        const std::string base = "/sys/class/powercap/intel-rapl";
-        for (int pkg = 0; pkg < 4; ++pkg) {
-            const std::string pd = base + "/intel-rapl:" + std::to_string(pkg);
-            if (read_name(pd).find("package") == std::string::npos) continue;
-            pkg_path_ = pd + "/energy_uj";
-            for (int sub = 0; sub < 8; ++sub) {
-                const std::string sd = pd + "/intel-rapl:" +
-                                       std::to_string(pkg) + ":" + std::to_string(sub);
-                if (read_name(sd) == "dram") { dram_path_ = sd + "/energy_uj"; break; }
-            }
-            break;
-        }
-    }
-    bool pkg_ok()  const { return !pkg_path_.empty(); }
-    bool dram_ok() const { return !dram_path_.empty(); }
-    ESnap snap() const {
-        return {pkg_path_.empty()  ? 0u : read_uj(pkg_path_),
-                dram_path_.empty() ? 0u : read_uj(dram_path_)};
-    }
-};
-
-static std::pair<double,double> e_mj(const ESnap& a, const ESnap& b) {
-    return {(double)(b.pkg  - a.pkg)  / 1000.0,
-            (double)(b.dram - a.dram) / 1000.0};
 }
 
 // ── Fast CXL.mem access (bank = 0) ───────────────────────────────────────────
@@ -155,10 +114,7 @@ static std::vector<uint32_t> read_unpack(void* mem_base, uint32_t base_row,
     return out;
 }
 
-// ── Tile helpers ─────────────────────────────────────────────────────────────
-//
-// Each tile occupies one mat.  tile_row(i, offset) converts a tile index and
-// within-mat row offset to the absolute row address used by CXL/CUD APIs.
+// ── Tile helpers ──────────────────────────────────────────────────────────────
 
 static uint32_t tile_row(uint32_t tile_idx, uint32_t off) {
     return mat_to_row_start(tile_idx) + off;
@@ -180,7 +136,7 @@ static void tile_write(void* mem_base, uint32_t tile_idx, uint8_t W,
     pack_write(mem_base, tile_row(tile_idx, kOffNB), W, nb);
 }
 
-enum class BenchOp { XOR, ADD, MUL };
+enum class BenchOp { XOR, AND, OR, ADD, MUL };
 
 static std::vector<CudInst> tile_gen_insts(uint32_t tile_idx, BenchOp op,
                                             uint8_t W, uint8_t W_out) {
@@ -191,6 +147,8 @@ static std::vector<CudInst> tile_gen_insts(uint32_t tile_idx, BenchOp op,
     const BitSerialLayout lnb  = {kBenchBank, tile_row(tile_idx, kOffNB),  W,     NUM_COL};
     const BitSerialLayout lout = {kBenchBank, tile_row(tile_idx, kOffOut), W_out, NUM_COL};
     switch (op) {
+    case BenchOp::AND: return gen_and(la, lb, lout, scratch);
+    case BenchOp::OR:  return gen_or (la, lb, lout, scratch);
     case BenchOp::XOR: return gen_xor(la, lna, lb, lnb, lout, scratch);
     case BenchOp::ADD: return gen_add(la, lna, lb, lnb, lout, W, scratch);
     case BenchOp::MUL: return gen_mul(la, lna, lb, lnb, lout, W, scratch);
@@ -245,23 +203,19 @@ static void print_result(const std::vector<uint32_t>& cpu_out,
 // ── Per-case benchmark ────────────────────────────────────────────────────────
 
 static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_TILES,
-                      const std::vector<uint8_t>& cpu_a, const std::vector<uint8_t>& cpu_b,
-                      const RaplReader& rapl) {
-    // MUL W=1: a*b = AND(a,b), result ∈ {0,1} → 1-bit output suffices.
-    // MUL W>1: W×W → 2W bits (standard bit-serial multiplier).
-    const uint8_t  W_out    = (op == BenchOp::MUL) ? (W == 1 ? (uint8_t)1u : (uint8_t)(2u * W)) :
-                              (op == BenchOp::ADD) ? (uint8_t)(W + 1u) : W;
+                      const std::vector<uint8_t>& cpu_a, const std::vector<uint8_t>& cpu_b) {
+    const uint8_t W_out = (op == BenchOp::ADD) ? (uint8_t)(W + 1u) :
+                          (op == BenchOp::MUL) ? (W == 1 ? (uint8_t)1u : (uint8_t)(2u * W)) :
+                          W;  // AND, OR, XOR: same width
     const uint32_t mask_in  = (1u << W) - 1u;
     const uint32_t mask_out = (W_out < 32u) ? ((1u << W_out) - 1u) : ~0u;
 
-    // Mask inputs to W bits
     std::vector<uint8_t> am(CPU_N), bm(CPU_N);
     for (size_t i = 0; i < CPU_N; ++i) {
         am[i] = cpu_a[i] & (uint8_t)mask_in;
         bm[i] = cpu_b[i] & (uint8_t)mask_in;
     }
 
-    // Precompute negations for CUD (first N_ELEM elements used for all tiles)
     const std::vector<uint8_t> a_tile(am.begin(), am.begin() + N_ELEM);
     const std::vector<uint8_t> b_tile(bm.begin(), bm.begin() + N_ELEM);
     std::vector<uint8_t> na(N_ELEM), nb(N_ELEM);
@@ -272,24 +226,24 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
 
     // ── CPU baseline ──────────────────────────────────────────────────────────
     std::vector<uint32_t> cpu_out(CPU_N);
-    const auto e0_cpu = rapl.snap();
-    const auto t_cpu  = Clock::now();
-    if (op == BenchOp::XOR) {
-        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
-        for (size_t i = 0; i < CPU_N; ++i) cpu_out[i] = am[i] ^ bm[i];
-    } else if (op == BenchOp::ADD) {
-        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
-        for (size_t i = 0; i < CPU_N; ++i) cpu_out[i] = (uint32_t)am[i] + bm[i];
-    } else {
-        #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
-        for (size_t i = 0; i < CPU_N; ++i) cpu_out[i] = (uint32_t)am[i] * bm[i];
+    const auto t_cpu = Clock::now();
+    #pragma omp parallel for schedule(static) num_threads(BENCH_CPU_THREADS)
+    for (size_t i = 0; i < CPU_N; ++i) {
+        switch (op) {
+        case BenchOp::AND: cpu_out[i] = am[i] & bm[i];                   break;
+        case BenchOp::OR:  cpu_out[i] = am[i] | bm[i];                   break;
+        case BenchOp::XOR: cpu_out[i] = am[i] ^ bm[i];                   break;
+        case BenchOp::ADD: cpu_out[i] = (uint32_t)am[i] + bm[i];         break;
+        case BenchOp::MUL: cpu_out[i] = (uint32_t)am[i] * bm[i];         break;
+        }
     }
     const double cpu_us = us_since(t_cpu);
-    const auto e1_cpu   = rapl.snap();
 
     const size_t n_insts_per_tile = tile_gen_insts(0, op, W, W_out).size();
     const size_t n_insts_total    = n_insts_per_tile * N_TILES;
-    const char*  opstr = (op == BenchOp::XOR) ? "XOR" :
+    const char*  opstr = (op == BenchOp::AND) ? "AND" :
+                         (op == BenchOp::OR)  ? "OR"  :
+                         (op == BenchOp::XOR) ? "XOR" :
                          (op == BenchOp::ADD) ? "ADD" : "MUL";
 
     std::cout << std::fixed << std::setprecision(1)
@@ -299,131 +253,100 @@ static void bench_one(CxlMem& mem, CxlIo& io, BenchOp op, uint8_t W, uint32_t N_
               << ", " << n_insts_per_tile << " insts/tile"
               << " = " << n_insts_total << " total) ──\n";
 
-    const bool has_pkg  = rapl.pkg_ok();
-    const bool has_dram = rapl.dram_ok();
-    auto pE = [&](const ESnap& e0, const ESnap& e1) {
-        auto [pkg, dram] = e_mj(e0, e1);
-        if (has_pkg)  std::cout << "  pkg="  << std::setw(7) << pkg  << " mJ";
-        if (has_dram) std::cout << "  dram=" << std::setw(7) << dram << " mJ";
-    };
-
     std::cout << "  CPU  (" << BENCH_CPU_THREADS << " threads, N=" << CPU_N << ")  : "
-              << std::setw(9) << cpu_us << " us";
-    pE(e0_cpu, e1_cpu);
-    std::cout << "\n";
+              << std::setw(9) << cpu_us << " us\n";
 
-    std::vector<uint32_t> ref_out;    // tile 0 output for correctness check
+    std::vector<uint32_t> ref_out;
     double seq_tot = 0, bulk_tot = 0;
 
 #if BENCH_RUN_SEQ
-    if (n_insts_per_tile > kInstBufSize) {
-        std::cout << "  CUD sequential: SKIP  (insts/tile " << n_insts_per_tile
-                  << " > buffer " << kInstBufSize << ")\n";
-    } else {
-        // ── CUD sequential: per-tile write → exec → read ──────────────────────
-        for (uint32_t ti = 0; ti < N_TILES; ++ti)
-            tile_setup(mem, ti, W_out);
+    // ── CUD sequential: per-tile write → gen → exec → read ───────────────────
+    for (uint32_t ti = 0; ti < N_TILES; ++ti)
+        tile_setup(mem, ti, W_out);
 
-        double seq_write = 0, seq_gen = 0, seq_exec = 0, seq_read = 0;
-        const auto e0_seq = rapl.snap();
+    double seq_write = 0, seq_gen = 0, seq_exec = 0, seq_read = 0;
 
-        for (uint32_t ti = 0; ti < N_TILES; ++ti) {
-            const auto tw = Clock::now();
-            tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
-            seq_write += us_since(tw);
+    for (uint32_t ti = 0; ti < N_TILES; ++ti) {
+        const auto tw = Clock::now();
+        tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
+        seq_write += us_since(tw);
 
-            const auto tg = Clock::now();
-            const auto insts = tile_gen_insts(ti, op, W, W_out);
-            seq_gen += us_since(tg);
+        const auto tg = Clock::now();
+        const auto insts = tile_gen_insts(ti, op, W, W_out);
+        seq_gen += us_since(tg);
 
-            const auto te = Clock::now();
-            if (!CudExecute(io, insts)) {
-                std::cout << "  [CUD TIMEOUT tile " << ti << "]\n";
-                return;
-            }
-            seq_exec += us_since(te);
-
-            const auto tr = Clock::now();
-            auto out = tile_read(mem.base(), ti, W_out);
-            seq_read += us_since(tr);
-
-            if (ti == 0) ref_out = std::move(out);
+        const auto te = Clock::now();
+        if (!CudExecute(io, insts)) {
+            std::cout << "  [CUD TIMEOUT tile " << ti << "]\n";
+            return;
         }
-        const auto e1_seq = rapl.snap();
-        seq_tot = seq_write + seq_gen + seq_exec + seq_read;
+        seq_exec += us_since(te);
 
-        std::cout << "  CUD sequential (" << N_TILES << " tiles):\n"
-                  << "       write total         : " << std::setw(9) << seq_write << " us\n"
-                  << "       gen   total         : " << std::setw(9) << seq_gen   << " us\n"
-                  << "       exec  total         : " << std::setw(9) << seq_exec  << " us\n"
-                  << "       read  total         : " << std::setw(9) << seq_read  << " us\n"
-                  << "       total               : " << std::setw(9) << seq_tot   << " us";
-        pE(e0_seq, e1_seq);
-        std::cout << "\n";
+        const auto tr = Clock::now();
+        auto out = tile_read(mem.base(), ti, W_out);
+        seq_read += us_since(tr);
+
+        if (ti == 0) ref_out = std::move(out);
     }
+    seq_tot = seq_write + seq_gen + seq_exec + seq_read;
+
+    std::cout << "  CUD sequential (" << N_TILES << " tiles):\n"
+              << "       write total         : " << std::setw(9) << seq_write << " us\n"
+              << "       gen   total         : " << std::setw(9) << seq_gen   << " us\n"
+              << "       exec  total         : " << std::setw(9) << seq_exec  << " us\n"
+              << "       read  total         : " << std::setw(9) << seq_read  << " us\n"
+              << "       total               : " << std::setw(9) << seq_tot   << " us\n";
 #endif
 
 #if BENCH_RUN_BULK
-    // ── CUD bulk: write all → exec all → read all ─────────────────────────────
-    if (n_insts_total > kInstBufSize) {
-        std::cout << "  CUD bulk: SKIP  (total insts " << n_insts_total
-                  << " > buffer " << kInstBufSize << ")\n";
-    } else {
-        for (uint32_t ti = 0; ti < N_TILES; ++ti)
-            tile_setup(mem, ti, W_out);
+    // ── CUD bulk: write all → gen all → exec all → read all ──────────────────
+    for (uint32_t ti = 0; ti < N_TILES; ++ti)
+        tile_setup(mem, ti, W_out);
 
-        const auto e0_bw = rapl.snap();
-        const auto tw_b  = Clock::now();
-        for (uint32_t ti = 0; ti < N_TILES; ++ti)
-            tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
-        const double bulk_write = us_since(tw_b);
-        const auto e1_bw = rapl.snap();
+    const auto tw_b = Clock::now();
+    for (uint32_t ti = 0; ti < N_TILES; ++ti)
+        tile_write(mem.base(), ti, W, a_tile, na, b_tile, nb);
+    const double bulk_write = us_since(tw_b);
 
-        const auto tg_b = Clock::now();
-        std::vector<CudInst> bulk_insts;
-        for (uint32_t ti = 0; ti < N_TILES; ++ti) {
-            const auto v = tile_gen_insts(ti, op, W, W_out);
-            bulk_insts.insert(bulk_insts.end(), v.begin(), v.end());
-        }
-        const double bulk_gen = us_since(tg_b);
-
-        const auto e0_be = rapl.snap();
-        const auto te_b  = Clock::now();
-        if (!CudExecute(io, bulk_insts)) {
-            std::cout << "  [CUD TIMEOUT bulk]\n";
-            return;
-        }
-        const double bulk_exec = us_since(te_b);
-        const auto e1_be = rapl.snap();
-
-        const auto e0_br = rapl.snap();
-        const auto tr_b  = Clock::now();
-        for (uint32_t ti = 0; ti < N_TILES; ++ti) {
-            auto out = tile_read(mem.base(), ti, W_out);
-            if (ti == 0 && ref_out.empty()) ref_out = std::move(out);
-        }
-        const double bulk_read = us_since(tr_b);
-        const auto e1_br = rapl.snap();
-        bulk_tot = bulk_write + bulk_gen + bulk_exec + bulk_read;
-
-        std::cout << "  CUD bulk      (" << N_TILES << " tiles):\n"
-                  << "       write               : " << std::setw(9) << bulk_write << " us";
-        pE(e0_bw, e1_bw);
-        std::cout << "\n       gen                 : " << std::setw(9) << bulk_gen   << " us"
-                  << "\n       exec                : " << std::setw(9) << bulk_exec  << " us";
-        pE(e0_be, e1_be);
-        std::cout << "\n       read                : " << std::setw(9) << bulk_read  << " us";
-        pE(e0_br, e1_br);
-        std::cout << "\n       total               : " << std::setw(9) << bulk_tot   << " us\n";
+    const auto tg_b = Clock::now();
+    std::vector<CudInst> bulk_insts;
+    for (uint32_t ti = 0; ti < N_TILES; ++ti) {
+        const auto v = tile_gen_insts(ti, op, W, W_out);
+        bulk_insts.insert(bulk_insts.end(), v.begin(), v.end());
     }
+    const double bulk_gen = us_since(tg_b);
+
+    const auto te_b = Clock::now();
+    if (!CudExecute(io, bulk_insts)) {
+        std::cout << "  [CUD TIMEOUT bulk]\n";
+        return;
+    }
+    const double bulk_exec = us_since(te_b);
+
+    const auto tr_b = Clock::now();
+    for (uint32_t ti = 0; ti < N_TILES; ++ti) {
+        auto out = tile_read(mem.base(), ti, W_out);
+        if (ti == 0 && ref_out.empty()) ref_out = std::move(out);
+    }
+    const double bulk_read = us_since(tr_b);
+    bulk_tot = bulk_write + bulk_gen + bulk_exec + bulk_read;
+
+    std::cout << "  CUD bulk      (" << N_TILES << " tiles):\n"
+              << "       write               : " << std::setw(9) << bulk_write << " us\n"
+              << "       gen                 : " << std::setw(9) << bulk_gen   << " us\n"
+              << "       exec                : " << std::setw(9) << bulk_exec  << " us\n"
+              << "       read                : " << std::setw(9) << bulk_read  << " us\n"
+              << "       total               : " << std::setw(9) << bulk_tot   << " us\n";
 #endif
 
     if (seq_tot > 0 && bulk_tot > 0)
         std::cout << std::fixed << std::setprecision(2)
                   << "  speedup bulk/seq        :     " << seq_tot / bulk_tot << "x\n";
 
-    if (!ref_out.empty())
-        print_result(cpu_out, ref_out, a_tile, b_tile, mask_out, W_out, op != BenchOp::XOR);
+    if (!ref_out.empty()) {
+        const bool use_dec = (op == BenchOp::ADD || op == BenchOp::MUL);
+        print_result(cpu_out, ref_out, a_tile, b_tile, mask_out, W_out, use_dec);
+    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -439,15 +362,11 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
     TeeBuf tee(std::cout.rdbuf(), logfile.rdbuf());
     std::streambuf* orig = std::cout.rdbuf(&tee);
 
-    const RaplReader rapl;
-
     std::cout << "\n===== CUD vs CPU Benchmark =====\n"
               << "  Log    : " << fname << "\n"
               << "  CPU    : " << BENCH_CPU_THREADS << " OMP threads, N=" << CPU_N << "\n"
               << "  Tile   : " << N_ELEM << " elem  (" << NUM_COL << " col x 64 bit)\n"
-              << "  Layout : 1 mat/tile, tile_i → mat_to_row_start(i)\n"
-              << "  RAPL   : pkg=" << (rapl.pkg_ok()  ? "yes" : "no")
-              << "  dram="         << (rapl.dram_ok() ? "yes" : "no") << "\n";
+              << "  Layout : 1 mat/tile, tile_i → mat_to_row_start(i)\n";
 
     std::mt19937 rng(42u);
     std::uniform_int_distribution<uint32_t> dist(0, 255);
@@ -455,14 +374,17 @@ void run_benchmark(CxlMem& mem, CxlIo& io) {
     for (auto& x : a) x = (uint8_t)dist(rng);
     for (auto& x : b) x = (uint8_t)dist(rng);
 
-    for (BenchOp op : {BenchOp::XOR, BenchOp::ADD, BenchOp::MUL}) {
-        const char* opstr = (op == BenchOp::XOR) ? "XOR" :
-                            (op == BenchOp::ADD) ? "ADD" : "MUL";
-        std::cout << "\n[" << opstr << "]\n";
+    std::cout << "\n[Bitwise]\n";
+    for (BenchOp op : {BenchOp::XOR, BenchOp::AND, BenchOp::OR})
         for (uint8_t W : kWidths)
             for (uint32_t nt = 1; nt <= BENCH_N_TILES; nt <<= 1)
-                bench_one(mem, io, op, W, nt, a, b, rapl);
-    }
+                bench_one(mem, io, op, W, nt, a, b);
+
+    std::cout << "\n[Arithmetic]\n";
+    for (BenchOp op : {BenchOp::ADD, BenchOp::MUL})
+        for (uint8_t W : kWidths)
+            for (uint32_t nt = 1; nt <= BENCH_N_TILES; nt <<= 1)
+                bench_one(mem, io, op, W, nt, a, b);
 
     std::cout << "\n================================\n"
               << "  Saved: " << fname << "\n";

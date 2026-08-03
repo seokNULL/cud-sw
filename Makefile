@@ -22,7 +22,6 @@ SRCS = main.cpp \
        src/cud/compute_lib/data_copy.cpp \
        src/cud/compute_lib/logical.cpp \
        src/cud/compute_lib/data_mapper.cpp \
-       src/cud/compute_lib/xor.cpp \
        src/cud/compute_lib/add.cpp \
        src/cud/compute_lib/mul.cpp
 

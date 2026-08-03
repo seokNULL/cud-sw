@@ -13,15 +13,14 @@
 // ── Tile settings ─────────────────────────────────────────────────────────────
 
 // Maximum tile count to test; benchmark iterates {1, 2, 4, ..., BENCH_N_TILES}.
-// CUD instruction buffer is 1024; bulk mode is skipped for cases that exceed it.
 #define BENCH_N_TILES 8
 
 // ── Execution mode ────────────────────────────────────────────────────────────
 
-// Set to 1 to enable sequential mode (per-tile: write → exec → read).
+// Set to 1 to enable sequential mode (per-tile: write → gen → exec → read).
 #define BENCH_RUN_SEQ  1
 
-// Set to 1 to enable bulk mode (all write → one exec → all read).
+// Set to 1 to enable bulk mode (all write → gen → one exec → all read).
 #define BENCH_RUN_BULK 1
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -16,6 +16,28 @@
 // NOT is not supported in hardware; the CPU must pre-compute complements and
 // write them to DRAM before calling any generator that requires them.
 
+// AND: out[i] = a[i] & b[i]  for each bit-plane i in [0, bit_width)
+//
+// Uses MAJ3(a, b, 0) per bit-plane.  11 insts/plane + 1 END.
+// Total: 11*W + 1  (W=1: 12  W=4: 45  W=8: 89)
+// No complement inputs required.
+std::vector<CudInst> gen_and(
+    const BitSerialLayout& a,
+    const BitSerialLayout& b,
+    const BitSerialLayout& out,
+    ScratchAllocator& scratch);
+
+// OR: out[i] = a[i] | b[i]  for each bit-plane i in [0, bit_width)
+//
+// Uses MAJ3(a, b, 1) per bit-plane.  11 insts/plane + 1 END.
+// Total: 11*W + 1  (W=1: 12  W=4: 45  W=8: 89)
+// No complement inputs required.
+std::vector<CudInst> gen_or(
+    const BitSerialLayout& a,
+    const BitSerialLayout& b,
+    const BitSerialLayout& out,
+    ScratchAllocator& scratch);
+
 // XOR: out[i] = a[i] ^ b[i]  for each bit-plane i in [0, bit_width)
 //
 // Algorithm: XOR = OR(AND(a, ~b), AND(~a, b))
@@ -25,6 +47,7 @@
 //
 // not_a and not_b must already be written to DRAM by the CPU.
 // Uses 2 scratch rows (t1, t2) reused across bit-planes.
+// Total: 33*W + 1  (W=1: 34  W=4: 133  W=8: 265)
 std::vector<CudInst> gen_xor(
     const BitSerialLayout& a,
     const BitSerialLayout& not_a,
@@ -55,13 +78,12 @@ std::vector<CudInst> gen_add(
 // MUL: out[k] = bit k of (a * b)  for k in [0, 2W)  (2W output bit-planes)
 //
 // Algorithm: Wallace tree (greedy left-to-right column reduction) + final CPA.
-//   Partial products: W² AND gates, each 22 insts.
-//   Reduction FAs: 6-group FA producing (sum, ~sum, carry, ~carry), 47 insts each.
-//   Final CPA: 2W × 6-group FA, 47 insts per bit.
-//   Instruction count: W²×22 + (Wallace FAs)×47 + 2W×47 + 2W×2 + 1
-//   Approx: W=4: ~1700 insts   W=8: ~6100 insts
+//   W=1: AND(a,b) fast path — 12 insts.
+//   W>1: partial products W²×22 insts + Wallace FAs×47 + CPA with trivial-case
+//        optimisation (FA(a,0,0) and FA(0,0,c) replaced by rowcopy).
+//   Approx: W=2: 195  W=4: 937  W=8: ~6100
 // CPU must pre-compute not_a and not_b and write all four to DRAM.
-// out.bit_width must equal 2*W.
+// out.bit_width must equal 2*W (or ≥1 for W=1).
 std::vector<CudInst> gen_mul(
     const BitSerialLayout& a,
     const BitSerialLayout& not_a,
